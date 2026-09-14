@@ -1,0 +1,415 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import qs.Commons
+import qs.Ui
+import "TimberModel.js" as TimberModel
+
+// Bar-widget frontend to `timber` (managed Git worktrees), following the
+// agents panel: a bar icon plus an anchored popup. Toggle with the icon
+// or `omarchy-shell io.github.nnutter.omarchy-timber toggle`.
+Panel {
+  id: root
+  moduleName: "io.github.nnutter.omarchy-timber"
+  ipcTarget: "io.github.nnutter.omarchy-timber"
+  property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+
+  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+
+  property var repos: []
+  property var worktrees: []
+  property string filterText: ""
+  property int selectedIndex: 0
+  property bool cursorActive: false
+  property string pendingPath: ""
+
+  property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
+  property int contentSpacing: Style.spacing.md
+  property int rowHeight: Math.max(Style.space(44), Style.font.body + Style.spacing.rowPaddingX * 2)
+  property int maxVisibleRows: 8
+  readonly property int visibleRows: Math.max(1, Math.min(displayModel.count, root.maxVisibleRows))
+  readonly property int listHeight: root.visibleRows * root.rowHeight + (root.visibleRows - 1) * Style.space(4)
+
+  // Same enumeration timber's own zsh completion uses: registered repo
+  // names plus a scan of the worktree root. `timber list` is avoided on
+  // purpose — its styled two-per-row table still emits ANSI under
+  // NO_COLOR and it enriches every row with git status, so one missing
+  // worktree directory fails the whole listing.
+  readonly property string listScript: [
+    'data_home=${XDG_DATA_HOME:-$HOME/.local/share};',
+    'root=${TIMBER_WORKTREE_ROOT:-$HOME/worktrees};',
+    'repos=$(timber repo list -q 2>/dev/null);',
+    'if [ -z "$repos" ]; then',
+    '  repos=$(for d in "$data_home"/timber/repos/*.git; do [ -d "$d" ] || continue; b=${d##*/}; echo "${b%.git}"; done);',
+    'fi;',
+    'printf "%s\\n" "$repos" | while IFS= read -r repo; do [ -n "$repo" ] || continue; printf "R\\t%s\\n" "$repo"; done;',
+    'shopt -s globstar nullglob;',
+    'printf "%s\\n" "$repos" | while IFS= read -r repo; do [ -n "$repo" ] || continue;',
+    '  for d in "$root/$repo"/**/"$repo"; do [ -e "$d/.git" ] || continue;',
+    '    parent=${d%/*}; name=${parent#"$root/$repo"/}; [ -n "$name" ] || continue;',
+    '    printf "W\\t%s@%s\\t%s\\n" "$name" "$repo" "$d";',
+    '  done;',
+    'done'
+  ].join("\n")
+
+  function refresh() {
+    root.pendingPath = ""
+    root.filterText = ""
+    root.selectedIndex = 0
+    root.cursorActive = false
+    listProc.running = true
+  }
+
+  function setFilter(nextFilter) {
+    root.filterText = nextFilter
+    root.selectedIndex = 0
+    root.cursorActive = true
+    root.rebuildDisplay()
+  }
+
+  function select(delta) {
+    if (displayModel.count === 0) return
+    if (!root.cursorActive) {
+      root.cursorActive = true
+      root.selectedIndex = delta < 0 ? displayModel.count - 1 : 0
+    } else {
+      root.selectedIndex = (root.selectedIndex + delta + displayModel.count) % displayModel.count
+    }
+    resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+  }
+
+  function selectAbsolute(index) {
+    if (displayModel.count === 0) return
+    root.cursorActive = true
+    root.selectedIndex = Math.max(0, Math.min(index, displayModel.count - 1))
+    resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+  }
+
+  function applyListOutput(text) {
+    var repos = []
+    var worktrees = []
+    var lines = String(text || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i]
+      if (!line) continue
+      var parts = line.split("\t")
+      if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
+      else if (parts[0] === "W" && parts[1] && parts[2]) {
+        var split = TimberModel.splitValue(parts[1])
+        if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2] })
+      }
+    }
+    root.repos = repos
+    root.worktrees = worktrees
+    root.rebuildDisplay()
+  }
+
+  function rebuildDisplay() {
+    var items = TimberModel.itemsForTerm(root.repos, root.worktrees, root.filterText)
+    displayModel.clear()
+    for (var i = 0; i < items.length; i++) {
+      var path = ""
+      if (items[i].kind === "open") {
+        for (var j = 0; j < root.worktrees.length; j++) {
+          if (root.worktrees[j].name === items[i].name && root.worktrees[j].repo === items[i].repo) {
+            path = root.worktrees[j].path
+            break
+          }
+        }
+      }
+      displayModel.append({ kind: items[i].kind, name: items[i].name, repo: items[i].repo, value: items[i].value, path: path })
+    }
+    if (displayModel.count === 0) root.selectedIndex = 0
+    else if (root.selectedIndex >= displayModel.count) root.selectedIndex = displayModel.count - 1
+    else if (root.selectedIndex < 0) root.selectedIndex = 0
+    Qt.callLater(function() {
+      if (displayModel.count > 0) resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+    })
+  }
+
+  // Failures surface only here, never in the widget itself.
+  function notifyFailure(op, detail) {
+    Util.execArgv([root.omarchyPath + "/bin/omarchy-notification-send", "-u", "critical", "--app-name", "Timber", "Timber worktree " + op + " failed", detail])
+  }
+
+  function openPath(path) {
+    if (!path) return
+    root.close()
+    Util.execArgv(["zed", "--new", path])
+  }
+
+  function removeIndex(index) {
+    if (index < 0 || index >= displayModel.count) return
+    var row = displayModel.get(index)
+    if (row.kind !== "open") return
+    if (removeProc.running) return
+    removeProc.command = ["timber", "remove", row.value]
+    removeProc.running = true
+  }
+
+  function activateIndex(index) {
+    if (index < 0 || index >= displayModel.count) return
+    var row = displayModel.get(index)
+    if (row.kind === "open") {
+      root.openPath(row.path)
+    } else {
+      if (createProc.running) return
+      createProc.command = ["timber", "create", "--no-herdr", row.value]
+      createProc.running = true
+    }
+  }
+
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
+  onOpenedChanged: if (opened) {
+    root.refresh()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  ListModel { id: displayModel }
+
+  Process {
+    id: createProc
+    stdout: StdioCollector {
+      id: createStdout
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: createStderr
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      if (code === 0) {
+        var path = String(createStdout.text || "").trim().split("\n").pop() || ""
+        if (path) root.openPath(path)
+        else root.notifyFailure("create", "reported no path")
+      } else {
+        var detail = String(createStderr.text || "").trim().split("\n").pop() || ("exit " + code)
+        root.notifyFailure("create", detail)
+      }
+    }
+  }
+
+  Process {
+    id: removeProc
+    stdout: StdioCollector {
+      id: removeStdout
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: removeStderr
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      if (code === 0) {
+        root.refresh()
+      } else {
+        var detail = String(removeStderr.text || "").trim().split("\n").pop() || ("exit " + code)
+        root.notifyFailure("remove", detail)
+      }
+    }
+  }
+
+  Process {
+    id: listProc
+    command: ["bash", "-lc", root.listScript]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyListOutput(text)
+    }
+    onExited: function(code) {
+      if (code !== 0 && displayModel.count === 0)
+        root.notifyFailure("list", "timber repo list exited " + code)
+    }
+  }
+
+  BarIconButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    text: ""
+    onPressed: function(buttonCode) {
+      if (buttonCode === Qt.RightButton) return
+      root.toggle()
+    }
+  }
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
+
+    // Raw key handling instead of PanelKeyCatcher: this panel filters as
+    // you type, so every printable character (including j/k/h/l, which the
+    // catcher reserves for movement) must reach the filter. Tab keeps the
+    // platform meaning of switching to the next panel.
+    Item {
+      id: keyCatcher
+      anchors.fill: parent
+      focus: true
+
+      Keys.priority: Keys.BeforeItem
+      Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Escape) {
+          if (root.filterText) root.setFilter("")
+          else root.close()
+          event.accepted = true
+        } else if (Util.editsFilter(event, root.filterText)) {
+          root.setFilter(Util.editedFilter(event, root.filterText))
+          event.accepted = true
+        } else if (event.key === Qt.Key_Up) {
+          root.select(-1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Down) {
+          root.select(1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+          root.switchPanel((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_PageUp) {
+          root.select(-6)
+          event.accepted = true
+        } else if (event.key === Qt.Key_PageDown) {
+          root.select(6)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Home) {
+          root.selectAbsolute(0)
+          event.accepted = true
+        } else if (event.key === Qt.Key_End) {
+          root.selectAbsolute(displayModel.count - 1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          if (root.cursorActive) root.activateIndex(root.selectedIndex)
+          else if (displayModel.count > 0) root.cursorActive = true
+          event.accepted = true
+        } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+          root.setFilter(root.filterText + event.text)
+          event.accepted = true
+        }
+      }
+
+      Column {
+        id: panelColumn
+        width: parent.width
+        spacing: root.contentSpacing
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          height: root.headerHeight
+          verticalAlignment: Text.AlignVCenter
+          text: root.filterText || "type worktree@repo"
+          color: root.foreground
+          opacity: root.filterText ? 1 : 0.58
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.heading
+          elide: Text.ElideRight
+        }
+
+        ListView {
+          id: resultList
+          width: parent.width
+          height: root.listHeight
+          model: displayModel
+          clip: true
+          spacing: Style.space(4)
+          boundsBehavior: Flickable.StopAtBounds
+
+          delegate: CursorSurface {
+            id: row
+            required property int index
+            required property string kind
+            required property string value
+            required property string path
+
+            hasCursor: root.cursorActive && index === root.selectedIndex
+            foreground: root.foreground
+            width: ListView.view.width
+            implicitHeight: root.rowHeight
+
+            Text {
+              textFormat: Text.PlainText
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(12)
+              anchors.rightMargin: Style.space(40)
+              verticalAlignment: Text.AlignVCenter
+              text: (row.kind === "create" ? "+ " : "") + row.value
+              color: root.foreground
+              opacity: row.kind === "create" && !row.hasCursor ? 0.72 : 1.0
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              elide: Text.ElideRight
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onPositionChanged: {
+                root.cursorActive = true
+                root.selectedIndex = row.index
+              }
+              onClicked: {
+                root.cursorActive = true
+                root.selectedIndex = row.index
+                root.activateIndex(row.index)
+              }
+            }
+
+            // Stacked after the row MouseArea so its press wins and the
+            // row does not also activate (open in Zed) underneath it.
+            Item {
+              visible: row.hasCursor && row.kind === "open"
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              width: Style.space(36)
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                text: "×"
+                color: Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+              }
+
+              MouseArea {
+                id: removeMouse
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.removeIndex(row.index)
+              }
+
+              PanelToolTip {
+                visible: removeMouse.containsMouse
+                text: "Remove " + row.value
+                fontFamily: root.fontFamily
+              }
+            }
+          }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          visible: displayModel.count === 0
+          width: parent.width
+          text: root.worktrees.length === 0 ? "No worktrees yet — type name@repo to create one" : "No matches"
+          color: root.foreground
+          opacity: 0.7
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
+        }
+      }
+    }
+  }
+}

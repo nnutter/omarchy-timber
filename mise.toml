@@ -1,0 +1,34 @@
+[tools]
+node = "24"
+
+# qmllint/quickshell are intentionally absent: Qt is not in the mise
+# registry and quickshell ships as a system package, so the overlay QML
+# itself is validated by summoning it on a live Omarchy machine.
+
+[tasks.check]
+description = "Syntax-check the plugin JavaScript and lint the QML"
+run = "node --check TimberModel.js && node --check tests/model.test.mjs && bash tests/qml_lint.sh Panel.qml"
+
+[tasks.test]
+description = "Run TimberModel unit tests"
+depends = ["check"]
+run = "node --test tests/model.test.mjs"
+
+[tasks.install]
+description = "Install the plugin into ~/.config/omarchy/plugins and rescan"
+depends = ["test"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+id="io.github.nnutter.omarchy-timber"
+dest="${HOME}/.config/omarchy/plugins/${id}"
+mkdir -p "$dest"
+cp manifest.json Panel.qml TimberModel.js "$dest/"
+if command -v omarchy-shell >/dev/null 2>&1; then
+  omarchy-shell shell rescanPlugins || echo "rescan failed: is omarchy-shell running?" >&2
+  omarchy restart shell
+else
+  echo "omarchy-shell not on PATH; skipping rescan" >&2
+fi
+echo "installed to $dest"
+'''

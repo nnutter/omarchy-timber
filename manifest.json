@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.nnutter.omarchy-timber",
+  "name": "Timber worktrees",
+  "version": "0.1.0",
+  "author": "nnutter",
+  "description": "List, filter, create, and open timber-managed Git worktrees",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Timber",
+    "description": "List, filter, create, and open timber-managed Git worktrees",
+    "category": "Files",
+    "allowMultiple": false
+  }
+}
