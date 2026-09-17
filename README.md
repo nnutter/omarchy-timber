@@ -33,13 +33,22 @@ Click the bar icon or run:
 omarchy-shell io.github.nnutter.omarchy-timber toggle
 ```
 
-Keys: type to filter (`@` narrows to repos), `↓` / `↑` move,
+Keys: the header is a quickfilter field — type to filter
+(`@` narrows to repos) with native cursor editing (`←` / `→`,
+`home` / `end`, `backspace`, `ctrl+u` to clear), `↓` / `↑` move,
 `enter` open or create, `esc` clear then close. `tab` keeps the
 platform meaning of switching to the next panel. Creating runs
 `timber create --no-herdr name@repo` and opens the reported path in
 Zed. Hover a worktree row for its `×`, which runs `timber remove`
 (no `--force`); failures arrive only as a critical desktop
 notification titled `Timber worktree <op> failed`.
+
+To register a new repo, click the repo icon (GitHub's octicon-repo)
+in the panel header. The form fronts `timber repo add`: enter the
+remote URL or local path, with optional `--name` and `--alias`
+overrides, then `enter` or `Add repository`. `esc` closes the form;
+a successful add refreshes the repo list, while failures arrive as a
+critical desktop notification titled `Timber repo add failed`.
 
 Suggested Hyprland binding:
 

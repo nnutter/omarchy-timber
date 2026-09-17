@@ -125,3 +125,19 @@ function splitValue(value) {
   if (!parts.qualified || !parts.before || !parts.after) return null
   return { name: parts.before, repo: parts.after }
 }
+
+// argv (after `timber`) for `timber repo add <url-or-path>
+// [--name <name>] [--alias <alias>]`. Blank name/alias flags are omitted
+// and surrounding whitespace is trimmed; returns null when the URL is
+// blank so callers can refuse to run instead of registering nothing.
+function repoAddArgs(url, name, alias) {
+  var u = String(url || "").trim()
+  if (!u) return null
+  var args = ["repo", "add"]
+  var n = String(name || "").trim()
+  if (n) args.push("--name", n)
+  var a = String(alias || "").trim()
+  if (a) args.push("--alias", a)
+  args.push(u)
+  return args
+}

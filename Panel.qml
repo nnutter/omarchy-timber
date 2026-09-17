@@ -23,6 +23,13 @@ Panel {
   property int selectedIndex: 0
   property bool cursorActive: false
   property string pendingPath: ""
+  property bool repoFormOpen: false
+
+  // True while one of the `timber repo add` form fields owns keyboard
+  // focus. The raw key handler below must let those keys through to the
+  // focused field instead of treating them as list-filter input.
+  readonly property bool formEditing: repoUrlField.activeFocus || repoNameField.activeFocus || repoAliasField.activeFocus
+  readonly property bool formButtonFocused: addRepoButton.activeFocus || cancelRepoButton.activeFocus
 
   property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
   property int contentSpacing: Style.spacing.md
@@ -66,6 +73,18 @@ Panel {
     root.selectedIndex = 0
     root.cursorActive = true
     root.rebuildDisplay()
+    root.syncFilterField()
+  }
+
+  // The quickfilter is a real TextField, so user edits must not fight a
+  // text binding (typing would silently break it). The field pushes edits
+  // via onTextEdited; this pulls programmatic state (open, clear, Escape,
+  // type-to-filter while unfocused) back into the field.
+  function syncFilterField() {
+    if (filterField.text !== root.filterText) {
+      filterField.text = root.filterText
+      filterField.cursorPosition = filterField.text.length
+    }
   }
 
   function select(delta) {
@@ -129,8 +148,34 @@ Panel {
   }
 
   // Failures surface only here, never in the widget itself.
-  function notifyFailure(op, detail) {
-    Util.execArgv([root.omarchyPath + "/bin/omarchy-notification-send", "-u", "critical", "--app-name", "Timber", "Timber worktree " + op + " failed", detail])
+  function notifyFailure(subject, detail) {
+    Util.execArgv([root.omarchyPath + "/bin/omarchy-notification-send", "-u", "critical", "--app-name", "Timber", "Timber " + subject + " failed", detail])
+  }
+
+  function openRepoForm() {
+    root.repoFormOpen = true
+    repoUrlField.clear()
+    repoNameField.clear()
+    repoAliasField.clear()
+    Qt.callLater(function() { repoUrlField.forceActiveFocus() })
+  }
+
+  function closeRepoForm() {
+    root.repoFormOpen = false
+    repoUrlField.clear()
+    repoNameField.clear()
+    repoAliasField.clear()
+  }
+
+  function submitRepoForm() {
+    if (repoAddProc.running) return
+    var args = TimberModel.repoAddArgs(repoUrlField.text, repoNameField.text, repoAliasField.text)
+    if (!args) {
+      repoUrlField.forceActiveFocus()
+      return
+    }
+    repoAddProc.command = ["timber"].concat(args)
+    repoAddProc.running = true
   }
 
   function openPath(path) {
@@ -164,8 +209,9 @@ Panel {
   implicitHeight: button.implicitHeight
 
   onOpenedChanged: if (opened) {
+    root.closeRepoForm()
     root.refresh()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { filterField.forceActiveFocus() })
   }
 
   ListModel { id: displayModel }
@@ -184,10 +230,10 @@ Panel {
       if (code === 0) {
         var path = String(createStdout.text || "").trim().split("\n").pop() || ""
         if (path) root.openPath(path)
-        else root.notifyFailure("create", "reported no path")
+        else root.notifyFailure("worktree create", "reported no path")
       } else {
         var detail = String(createStderr.text || "").trim().split("\n").pop() || ("exit " + code)
-        root.notifyFailure("create", detail)
+        root.notifyFailure("worktree create", detail)
       }
     }
   }
@@ -207,7 +253,28 @@ Panel {
         root.refresh()
       } else {
         var detail = String(removeStderr.text || "").trim().split("\n").pop() || ("exit " + code)
-        root.notifyFailure("remove", detail)
+        root.notifyFailure("worktree remove", detail)
+      }
+    }
+  }
+
+  Process {
+    id: repoAddProc
+    stdout: StdioCollector {
+      id: repoAddStdout
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: repoAddStderr
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      if (code === 0) {
+        root.closeRepoForm()
+        root.refresh()
+      } else {
+        var detail = String(repoAddStderr.text || "").trim().split("\n").pop() || ("exit " + code)
+        root.notifyFailure("repo add", detail)
       }
     }
   }
@@ -221,7 +288,7 @@ Panel {
     }
     onExited: function(code) {
       if (code !== 0 && displayModel.count === 0)
-        root.notifyFailure("list", "timber repo list exited " + code)
+        root.notifyFailure("worktree list", "timber repo list exited " + code)
     }
   }
 
@@ -242,14 +309,18 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: keyCatcher
+    // The quickfilter owns typing, so it takes focus on open (with a
+    // visible text cursor) instead of the bare key catcher.
+    focusTarget: filterField
     contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
 
-    // Raw key handling instead of PanelKeyCatcher: this panel filters as
-    // you type, so every printable character (including j/k/h/l, which the
-    // catcher reserves for movement) must reach the filter. Tab keeps the
-    // platform meaning of switching to the next panel.
+    // Raw key handling instead of PanelKeyCatcher: the quickfilter is a
+    // real TextField, so typing, Backspace, and cursor keys fall through
+    // to the focused field while list navigation (Up/Down/PgUp/PgDn,
+    // Return, Tab, Escape) is intercepted here. Tab keeps the platform
+    // meaning of switching to the next panel, except on the repo form's
+    // own buttons, where it walks the focus chain.
     Item {
       id: keyCatcher
       anchors.fill: parent
@@ -257,12 +328,61 @@ Panel {
 
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) {
+        // While a `timber repo add` field owns focus the keys belong to
+        // that field (typing, Tab navigation, Enter to submit). Only
+        // Escape is intercepted, to hand focus back to the panel.
+        if (root.formEditing) {
+          if (event.key === Qt.Key_Escape) {
+            keyCatcher.forceActiveFocus()
+            event.accepted = true
+          }
+          return
+        }
+        // The quickfilter field owns typing and cursor movement. Only
+        // list-navigation keys are intercepted; Ctrl+U is kept as
+        // clear-line because the field does not implement it natively.
+        if (filterField.activeFocus) {
+          if (event.key === Qt.Key_Escape) {
+            if (root.repoFormOpen) root.closeRepoForm()
+            else if (root.filterText) root.setFilter("")
+            else root.close()
+            event.accepted = true
+          } else if (event.key === Qt.Key_U && event.modifiers === Qt.ControlModifier) {
+            root.setFilter("")
+            event.accepted = true
+          } else if (event.key === Qt.Key_Up) {
+            root.select(-1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Down) {
+            root.select(1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+            root.switchPanel((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_PageUp) {
+            root.select(-6)
+            event.accepted = true
+          } else if (event.key === Qt.Key_PageDown) {
+            root.select(6)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            if (root.cursorActive) root.activateIndex(root.selectedIndex)
+            else if (displayModel.count > 0) root.cursorActive = true
+            event.accepted = true
+          }
+          return
+        }
         if (event.key === Qt.Key_Escape) {
-          if (root.filterText) root.setFilter("")
+          if (root.repoFormOpen) root.closeRepoForm()
+          else if (root.filterText) root.setFilter("")
           else root.close()
           event.accepted = true
         } else if (Util.editsFilter(event, root.filterText)) {
+          // Type-to-filter while unfocused (e.g. after Escaping out of a
+          // repo field): route the edit into the quickfilter and focus it
+          // so continued typing flows naturally.
           root.setFilter(Util.editedFilter(event, root.filterText))
+          filterField.forceActiveFocus()
           event.accepted = true
         } else if (event.key === Qt.Key_Up) {
           root.select(-1)
@@ -271,6 +391,7 @@ Panel {
           root.select(1)
           event.accepted = true
         } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+          if (root.formButtonFocused) return
           root.switchPanel((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
           event.accepted = true
         } else if (event.key === Qt.Key_PageUp) {
@@ -286,11 +407,17 @@ Panel {
           root.selectAbsolute(displayModel.count - 1)
           event.accepted = true
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          // A focused form button activates on Return/Space itself.
+          if (root.formButtonFocused) return
           if (root.cursorActive) root.activateIndex(root.selectedIndex)
           else if (displayModel.count > 0) root.cursorActive = true
           event.accepted = true
         } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+          // Space activates a focused form button; anything else typed
+          // while unfocused routes into the quickfilter like above.
+          if (root.formButtonFocused && event.key === Qt.Key_Space) return
           root.setFilter(root.filterText + event.text)
+          filterField.forceActiveFocus()
           event.accepted = true
         }
       }
@@ -300,17 +427,101 @@ Panel {
         width: parent.width
         spacing: root.contentSpacing
 
-        Text {
-          textFormat: Text.PlainText
+        Row {
           width: parent.width
           height: root.headerHeight
-          verticalAlignment: Text.AlignVCenter
-          text: root.filterText || "type worktree@repo"
-          color: root.foreground
-          opacity: root.filterText ? 1 : 0.58
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.heading
-          elide: Text.ElideRight
+          spacing: Style.space(8)
+
+          TextField {
+            id: filterField
+            width: parent.width - repoAddButton.width - parent.spacing
+            anchors.verticalCenter: parent.verticalCenter
+            placeholderText: "type worktree@repo"
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.heading
+            foreground: root.foreground
+            onTextEdited: root.setFilter(text)
+          }
+
+          // GitHub's New-repository mark: octicon-repo, shipped in Nerd
+          // Fonts as oct-repo (U+F401) and rendered in the panel font like
+          // every other kit glyph.
+          PanelActionButton {
+            id: repoAddButton
+            iconText: "\uf401"
+            tooltipText: root.repoFormOpen ? "Close repository form" : "Add repository (timber repo add)"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: {
+              if (root.repoFormOpen) root.closeRepoForm()
+              else root.openRepoForm()
+            }
+          }
+        }
+
+        // Form fronting `timber repo add <url-or-path> [--name] [--alias]`.
+        // Enter in any field submits; Tab walks the fields and buttons via
+        // the normal focus chain (the key handler above stands aside while
+        // a field owns focus); Esc blurs a field, then closes the form.
+        Column {
+          width: parent.width
+          spacing: Style.space(8)
+          visible: root.repoFormOpen
+
+          TextField {
+            id: repoUrlField
+            width: parent.width
+            placeholderText: "Remote URL or path"
+            font.family: root.fontFamily
+            foreground: root.foreground
+            enabled: !repoAddProc.running
+            onAccepted: root.submitRepoForm()
+          }
+
+          TextField {
+            id: repoNameField
+            width: parent.width
+            placeholderText: "Name (optional, derived from URL)"
+            font.family: root.fontFamily
+            foreground: root.foreground
+            enabled: !repoAddProc.running
+            onAccepted: root.submitRepoForm()
+          }
+
+          TextField {
+            id: repoAliasField
+            width: parent.width
+            placeholderText: "Alias (optional)"
+            font.family: root.fontFamily
+            foreground: root.foreground
+            enabled: !repoAddProc.running
+            onAccepted: root.submitRepoForm()
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Button {
+              id: addRepoButton
+              text: repoAddProc.running ? "Adding…" : "Add repository"
+              tooltipText: "Run timber repo add"
+              focusable: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.submitRepoForm()
+            }
+
+            Button {
+              id: cancelRepoButton
+              text: "Cancel"
+              focusable: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.closeRepoForm()
+            }
+          }
         }
 
         ListView {
@@ -322,17 +533,31 @@ Panel {
           spacing: Style.space(4)
           boundsBehavior: Flickable.StopAtBounds
 
-          delegate: CursorSurface {
+          // Plain item instead of CursorSurface: selection is a slim
+          // accent marker at the leading edge, not a full-row box.
+          delegate: Item {
             id: row
             required property int index
             required property string kind
             required property string value
             required property string path
 
-            hasCursor: root.cursorActive && index === root.selectedIndex
-            foreground: root.foreground
+            readonly property bool selected: root.cursorActive && index === root.selectedIndex
+
             width: ListView.view.width
             implicitHeight: root.rowHeight
+
+            Rectangle {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(3)
+              height: parent.height - Style.space(24)
+              radius: width / 2
+              color: Color.accent
+              opacity: row.selected ? 1 : 0
+
+              Behavior on opacity { NumberAnimation { duration: 90 } }
+            }
 
             Text {
               textFormat: Text.PlainText
@@ -342,7 +567,7 @@ Panel {
               verticalAlignment: Text.AlignVCenter
               text: (row.kind === "create" ? "+ " : "") + row.value
               color: root.foreground
-              opacity: row.kind === "create" && !row.hasCursor ? 0.72 : 1.0
+              opacity: row.kind === "create" && !row.selected ? 0.72 : 1.0
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               elide: Text.ElideRight
@@ -366,16 +591,20 @@ Panel {
             // Stacked after the row MouseArea so its press wins and the
             // row does not also activate (open in Zed) underneath it.
             Item {
-              visible: row.hasCursor && row.kind === "open"
+              visible: row.selected && row.kind === "open"
               anchors.right: parent.right
               anchors.top: parent.top
               anchors.bottom: parent.bottom
-              width: Style.space(36)
+              // Same width as the header repo button so both glyphs share
+              // a right column in any theme.
+              width: repoAddButton.width
 
               Text {
                 textFormat: Text.PlainText
                 anchors.centerIn: parent
-                text: "×"
+                // nf-md-delete (U+F0159): the destructive-row glyph the
+                // first-party bluetooth panel uses for Forget.
+                text: "󰅙"
                 color: Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title
