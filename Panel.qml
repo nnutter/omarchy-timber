@@ -531,17 +531,31 @@ Panel {
           spacing: Style.space(4)
           boundsBehavior: Flickable.StopAtBounds
 
-          delegate: CursorSurface {
+          // Plain item instead of CursorSurface: selection is a slim
+          // accent marker at the leading edge, not a full-row box.
+          delegate: Item {
             id: row
             required property int index
             required property string kind
             required property string value
             required property string path
 
-            hasCursor: root.cursorActive && index === root.selectedIndex
-            foreground: root.foreground
+            readonly property bool selected: root.cursorActive && index === root.selectedIndex
+
             width: ListView.view.width
             implicitHeight: root.rowHeight
+
+            Rectangle {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(3)
+              height: parent.height - Style.space(24)
+              radius: width / 2
+              color: Color.accent
+              opacity: row.selected ? 1 : 0
+
+              Behavior on opacity { NumberAnimation { duration: 90 } }
+            }
 
             Text {
               textFormat: Text.PlainText
@@ -551,7 +565,7 @@ Panel {
               verticalAlignment: Text.AlignVCenter
               text: (row.kind === "create" ? "+ " : "") + row.value
               color: root.foreground
-              opacity: row.kind === "create" && !row.hasCursor ? 0.72 : 1.0
+              opacity: row.kind === "create" && !row.selected ? 0.72 : 1.0
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               elide: Text.ElideRight
@@ -575,7 +589,7 @@ Panel {
             // Stacked after the row MouseArea so its press wins and the
             // row does not also activate (open in Zed) underneath it.
             Item {
-              visible: row.hasCursor && row.kind === "open"
+              visible: row.selected && row.kind === "open"
               anchors.right: parent.right
               anchors.top: parent.top
               anchors.bottom: parent.bottom
