@@ -65,6 +65,7 @@ Panel {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = false
+    root.syncFilterField()
     listProc.running = true
   }
 
@@ -229,8 +230,10 @@ Panel {
     onExited: function(code) {
       if (code === 0) {
         var path = String(createStdout.text || "").trim().split("\n").pop() || ""
-        if (path) root.openPath(path)
-        else root.notifyFailure("worktree create", "reported no path")
+        if (path) {
+          root.setFilter("")
+          root.openPath(path)
+        } else root.notifyFailure("worktree create", "reported no path")
       } else {
         var detail = String(createStderr.text || "").trim().split("\n").pop() || ("exit " + code)
         root.notifyFailure("worktree create", detail)
