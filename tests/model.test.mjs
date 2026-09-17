@@ -9,10 +9,10 @@ vm.createContext(sandbox);
 // TimberModel.js declares bare functions (QML import style), so export
 // them explicitly for the test context.
 vm.runInContext(
-  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue };",
+  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue, repoAddArgs };",
   sandbox,
 );
-const { itemsForTerm, splitValue } = sandbox.__timberModel;
+const { itemsForTerm, splitValue, repoAddArgs } = sandbox.__timberModel;
 
 const repos = [{ name: "timber" }, { name: "persona" }];
 const worktrees = [
@@ -71,6 +71,39 @@ describe("itemsForTerm", () => {
     const items = itemsForTerm(repos, worktrees, "beta@persona");
     assert.deepEqual(kinds(items), ["open"]);
     assert.deepEqual(values(items), ["beta@persona"]);
+  });
+});
+
+describe("repoAddArgs", () => {
+  it("builds timber repo add argv with name and alias", () => {
+    assert.deepEqual(
+      Array.from(
+        repoAddArgs("git@github.com:org/repo.git", "repo", "My Repo"),
+      ),
+      ["repo", "add", "--name", "repo", "--alias", "My Repo", "git@github.com:org/repo.git"],
+    );
+  });
+
+  it("omits blank name and alias flags", () => {
+    assert.deepEqual(Array.from(repoAddArgs("https://github.com/org/repo.git", "", "  ")), [
+      "repo",
+      "add",
+      "https://github.com/org/repo.git",
+    ]);
+  });
+
+  it("trims surrounding whitespace", () => {
+    assert.deepEqual(Array.from(repoAddArgs("  /srv/git/repo.git  ", " r ", "")), [
+      "repo",
+      "add",
+      "--name",
+      "r",
+      "/srv/git/repo.git",
+    ]);
+  });
+
+  it("refuses a blank URL", () => {
+    assert.equal(repoAddArgs("   ", "repo", "alias"), null);
   });
 });
 

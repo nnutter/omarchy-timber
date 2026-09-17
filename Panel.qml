@@ -23,6 +23,12 @@ Panel {
   property int selectedIndex: 0
   property bool cursorActive: false
   property string pendingPath: ""
+  property bool repoFormOpen: false
+
+  // True while one of the `timber repo add` form fields owns keyboard
+  // focus. The raw key handler below must let those keys through to the
+  // focused field instead of treating them as list-filter input.
+  readonly property bool formEditing: repoUrlField.activeFocus || repoNameField.activeFocus || repoAliasField.activeFocus
 
   property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
   property int contentSpacing: Style.spacing.md
@@ -129,8 +135,34 @@ Panel {
   }
 
   // Failures surface only here, never in the widget itself.
-  function notifyFailure(op, detail) {
-    Util.execArgv([root.omarchyPath + "/bin/omarchy-notification-send", "-u", "critical", "--app-name", "Timber", "Timber worktree " + op + " failed", detail])
+  function notifyFailure(subject, detail) {
+    Util.execArgv([root.omarchyPath + "/bin/omarchy-notification-send", "-u", "critical", "--app-name", "Timber", "Timber " + subject + " failed", detail])
+  }
+
+  function openRepoForm() {
+    root.repoFormOpen = true
+    repoUrlField.clear()
+    repoNameField.clear()
+    repoAliasField.clear()
+    Qt.callLater(function() { repoUrlField.forceActiveFocus() })
+  }
+
+  function closeRepoForm() {
+    root.repoFormOpen = false
+    repoUrlField.clear()
+    repoNameField.clear()
+    repoAliasField.clear()
+  }
+
+  function submitRepoForm() {
+    if (repoAddProc.running) return
+    var args = TimberModel.repoAddArgs(repoUrlField.text, repoNameField.text, repoAliasField.text)
+    if (!args) {
+      repoUrlField.forceActiveFocus()
+      return
+    }
+    repoAddProc.command = ["timber"].concat(args)
+    repoAddProc.running = true
   }
 
   function openPath(path) {
@@ -164,6 +196,7 @@ Panel {
   implicitHeight: button.implicitHeight
 
   onOpenedChanged: if (opened) {
+    root.closeRepoForm()
     root.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -184,10 +217,10 @@ Panel {
       if (code === 0) {
         var path = String(createStdout.text || "").trim().split("\n").pop() || ""
         if (path) root.openPath(path)
-        else root.notifyFailure("create", "reported no path")
+        else root.notifyFailure("worktree create", "reported no path")
       } else {
         var detail = String(createStderr.text || "").trim().split("\n").pop() || ("exit " + code)
-        root.notifyFailure("create", detail)
+        root.notifyFailure("worktree create", detail)
       }
     }
   }
@@ -207,7 +240,28 @@ Panel {
         root.refresh()
       } else {
         var detail = String(removeStderr.text || "").trim().split("\n").pop() || ("exit " + code)
-        root.notifyFailure("remove", detail)
+        root.notifyFailure("worktree remove", detail)
+      }
+    }
+  }
+
+  Process {
+    id: repoAddProc
+    stdout: StdioCollector {
+      id: repoAddStdout
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: repoAddStderr
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      if (code === 0) {
+        root.closeRepoForm()
+        root.refresh()
+      } else {
+        var detail = String(repoAddStderr.text || "").trim().split("\n").pop() || ("exit " + code)
+        root.notifyFailure("repo add", detail)
       }
     }
   }
@@ -221,7 +275,7 @@ Panel {
     }
     onExited: function(code) {
       if (code !== 0 && displayModel.count === 0)
-        root.notifyFailure("list", "timber repo list exited " + code)
+        root.notifyFailure("worktree list", "timber repo list exited " + code)
     }
   }
 
@@ -257,8 +311,19 @@ Panel {
 
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) {
+        // While a `timber repo add` field owns focus the keys belong to
+        // that field (typing, Tab navigation, Enter to submit). Only
+        // Escape is intercepted, to hand focus back to the panel.
+        if (root.formEditing) {
+          if (event.key === Qt.Key_Escape) {
+            keyCatcher.forceActiveFocus()
+            event.accepted = true
+          }
+          return
+        }
         if (event.key === Qt.Key_Escape) {
-          if (root.filterText) root.setFilter("")
+          if (root.repoFormOpen) root.closeRepoForm()
+          else if (root.filterText) root.setFilter("")
           else root.close()
           event.accepted = true
         } else if (Util.editsFilter(event, root.filterText)) {
@@ -300,17 +365,101 @@ Panel {
         width: parent.width
         spacing: root.contentSpacing
 
-        Text {
-          textFormat: Text.PlainText
+        Row {
           width: parent.width
           height: root.headerHeight
-          verticalAlignment: Text.AlignVCenter
-          text: root.filterText || "type worktree@repo"
-          color: root.foreground
-          opacity: root.filterText ? 1 : 0.58
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.heading
-          elide: Text.ElideRight
+          spacing: Style.space(8)
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width - repoAddButton.width - parent.spacing
+            height: parent.height
+            verticalAlignment: Text.AlignVCenter
+            text: root.filterText || "type worktree@repo"
+            color: root.foreground
+            opacity: root.filterText ? 1 : 0.58
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.heading
+            elide: Text.ElideRight
+          }
+
+          // GitHub's New-repository mark: octicon-repo, shipped in Nerd
+          // Fonts as oct-repo (U+F401) and rendered in the panel font like
+          // every other kit glyph.
+          PanelActionButton {
+            id: repoAddButton
+            iconText: "\uf401"
+            tooltipText: root.repoFormOpen ? "Close repository form" : "Add repository (timber repo add)"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: {
+              if (root.repoFormOpen) root.closeRepoForm()
+              else root.openRepoForm()
+            }
+          }
+        }
+
+        // Form fronting `timber repo add <url-or-path> [--name] [--alias]`.
+        // Enter in any field submits; Tab walks the fields and buttons via
+        // the normal focus chain (the key handler above stands aside while
+        // a field owns focus); Esc blurs a field, then closes the form.
+        Column {
+          width: parent.width
+          spacing: Style.space(8)
+          visible: root.repoFormOpen
+
+          TextField {
+            id: repoUrlField
+            width: parent.width
+            placeholderText: "Remote URL or path"
+            font.family: root.fontFamily
+            foreground: root.foreground
+            enabled: !repoAddProc.running
+            onAccepted: root.submitRepoForm()
+          }
+
+          TextField {
+            id: repoNameField
+            width: parent.width
+            placeholderText: "Name (optional, derived from URL)"
+            font.family: root.fontFamily
+            foreground: root.foreground
+            enabled: !repoAddProc.running
+            onAccepted: root.submitRepoForm()
+          }
+
+          TextField {
+            id: repoAliasField
+            width: parent.width
+            placeholderText: "Alias (optional)"
+            font.family: root.fontFamily
+            foreground: root.foreground
+            enabled: !repoAddProc.running
+            onAccepted: root.submitRepoForm()
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Button {
+              text: repoAddProc.running ? "Adding…" : "Add repository"
+              tooltipText: "Run timber repo add"
+              focusable: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.submitRepoForm()
+            }
+
+            Button {
+              text: "Cancel"
+              focusable: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.closeRepoForm()
+            }
+          }
         }
 
         ListView {
