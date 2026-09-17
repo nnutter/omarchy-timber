@@ -584,7 +584,9 @@ Panel {
               Text {
                 textFormat: Text.PlainText
                 anchors.centerIn: parent
-                text: "×"
+                // nf-md-delete (U+F0159): the destructive-row glyph the
+                // first-party bluetooth panel uses for Forget.
+                text: "󰅙"
                 color: Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title
