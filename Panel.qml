@@ -309,7 +309,9 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: keyCatcher
+    // The quickfilter owns typing, so it takes focus on open (with a
+    // visible text cursor) instead of the bare key catcher.
+    focusTarget: filterField
     contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
 
