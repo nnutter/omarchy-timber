@@ -33,7 +33,9 @@ Click the bar icon or run:
 omarchy-shell io.github.nnutter.omarchy-timber toggle
 ```
 
-Keys: type to filter (`@` narrows to repos), `↓` / `↑` move,
+Keys: the header is a quickfilter field — type to filter
+(`@` narrows to repos) with native cursor editing (`←` / `→`,
+`home` / `end`, `backspace`, `ctrl+u` to clear), `↓` / `↑` move,
 `enter` open or create, `esc` clear then close. `tab` keeps the
 platform meaning of switching to the next panel. Creating runs
 `timber create --no-herdr name@repo` and opens the reported path in

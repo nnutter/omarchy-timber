@@ -29,6 +29,7 @@ Panel {
   // focus. The raw key handler below must let those keys through to the
   // focused field instead of treating them as list-filter input.
   readonly property bool formEditing: repoUrlField.activeFocus || repoNameField.activeFocus || repoAliasField.activeFocus
+  readonly property bool formButtonFocused: addRepoButton.activeFocus || cancelRepoButton.activeFocus
 
   property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
   property int contentSpacing: Style.spacing.md
@@ -72,6 +73,18 @@ Panel {
     root.selectedIndex = 0
     root.cursorActive = true
     root.rebuildDisplay()
+    root.syncFilterField()
+  }
+
+  // The quickfilter is a real TextField, so user edits must not fight a
+  // text binding (typing would silently break it). The field pushes edits
+  // via onTextEdited; this pulls programmatic state (open, clear, Escape,
+  // type-to-filter while unfocused) back into the field.
+  function syncFilterField() {
+    if (filterField.text !== root.filterText) {
+      filterField.text = root.filterText
+      filterField.cursorPosition = filterField.text.length
+    }
   }
 
   function select(delta) {
@@ -198,7 +211,7 @@ Panel {
   onOpenedChanged: if (opened) {
     root.closeRepoForm()
     root.refresh()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { filterField.forceActiveFocus() })
   }
 
   ListModel { id: displayModel }
@@ -300,10 +313,12 @@ Panel {
     contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
 
-    // Raw key handling instead of PanelKeyCatcher: this panel filters as
-    // you type, so every printable character (including j/k/h/l, which the
-    // catcher reserves for movement) must reach the filter. Tab keeps the
-    // platform meaning of switching to the next panel.
+    // Raw key handling instead of PanelKeyCatcher: the quickfilter is a
+    // real TextField, so typing, Backspace, and cursor keys fall through
+    // to the focused field while list navigation (Up/Down/PgUp/PgDn,
+    // Return, Tab, Escape) is intercepted here. Tab keeps the platform
+    // meaning of switching to the next panel, except on the repo form's
+    // own buttons, where it walks the focus chain.
     Item {
       id: keyCatcher
       anchors.fill: parent
@@ -321,13 +336,51 @@ Panel {
           }
           return
         }
+        // The quickfilter field owns typing and cursor movement. Only
+        // list-navigation keys are intercepted; Ctrl+U is kept as
+        // clear-line because the field does not implement it natively.
+        if (filterField.activeFocus) {
+          if (event.key === Qt.Key_Escape) {
+            if (root.repoFormOpen) root.closeRepoForm()
+            else if (root.filterText) root.setFilter("")
+            else root.close()
+            event.accepted = true
+          } else if (event.key === Qt.Key_U && event.modifiers === Qt.ControlModifier) {
+            root.setFilter("")
+            event.accepted = true
+          } else if (event.key === Qt.Key_Up) {
+            root.select(-1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Down) {
+            root.select(1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+            root.switchPanel((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_PageUp) {
+            root.select(-6)
+            event.accepted = true
+          } else if (event.key === Qt.Key_PageDown) {
+            root.select(6)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            if (root.cursorActive) root.activateIndex(root.selectedIndex)
+            else if (displayModel.count > 0) root.cursorActive = true
+            event.accepted = true
+          }
+          return
+        }
         if (event.key === Qt.Key_Escape) {
           if (root.repoFormOpen) root.closeRepoForm()
           else if (root.filterText) root.setFilter("")
           else root.close()
           event.accepted = true
         } else if (Util.editsFilter(event, root.filterText)) {
+          // Type-to-filter while unfocused (e.g. after Escaping out of a
+          // repo field): route the edit into the quickfilter and focus it
+          // so continued typing flows naturally.
           root.setFilter(Util.editedFilter(event, root.filterText))
+          filterField.forceActiveFocus()
           event.accepted = true
         } else if (event.key === Qt.Key_Up) {
           root.select(-1)
@@ -336,6 +389,7 @@ Panel {
           root.select(1)
           event.accepted = true
         } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+          if (root.formButtonFocused) return
           root.switchPanel((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
           event.accepted = true
         } else if (event.key === Qt.Key_PageUp) {
@@ -351,11 +405,17 @@ Panel {
           root.selectAbsolute(displayModel.count - 1)
           event.accepted = true
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          // A focused form button activates on Return/Space itself.
+          if (root.formButtonFocused) return
           if (root.cursorActive) root.activateIndex(root.selectedIndex)
           else if (displayModel.count > 0) root.cursorActive = true
           event.accepted = true
         } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+          // Space activates a focused form button; anything else typed
+          // while unfocused routes into the quickfilter like above.
+          if (root.formButtonFocused && event.key === Qt.Key_Space) return
           root.setFilter(root.filterText + event.text)
+          filterField.forceActiveFocus()
           event.accepted = true
         }
       }
@@ -370,17 +430,15 @@ Panel {
           height: root.headerHeight
           spacing: Style.space(8)
 
-          Text {
-            textFormat: Text.PlainText
+          TextField {
+            id: filterField
             width: parent.width - repoAddButton.width - parent.spacing
-            height: parent.height
-            verticalAlignment: Text.AlignVCenter
-            text: root.filterText || "type worktree@repo"
-            color: root.foreground
-            opacity: root.filterText ? 1 : 0.58
+            anchors.verticalCenter: parent.verticalCenter
+            placeholderText: "type worktree@repo"
             font.family: root.fontFamily
             font.pixelSize: Style.font.heading
-            elide: Text.ElideRight
+            foreground: root.foreground
+            onTextEdited: root.setFilter(text)
           }
 
           // GitHub's New-repository mark: octicon-repo, shipped in Nerd
@@ -444,6 +502,7 @@ Panel {
             spacing: Style.space(8)
 
             Button {
+              id: addRepoButton
               text: repoAddProc.running ? "Adding…" : "Add repository"
               tooltipText: "Run timber repo add"
               focusable: true
@@ -453,6 +512,7 @@ Panel {
             }
 
             Button {
+              id: cancelRepoButton
               text: "Cancel"
               focusable: true
               foreground: root.foreground
