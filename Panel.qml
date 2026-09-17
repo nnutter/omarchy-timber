@@ -593,7 +593,9 @@ Panel {
               anchors.right: parent.right
               anchors.top: parent.top
               anchors.bottom: parent.bottom
-              width: Style.space(36)
+              // Same width as the header repo button so both glyphs share
+              // a right column in any theme.
+              width: repoAddButton.width
 
               Text {
                 textFormat: Text.PlainText
