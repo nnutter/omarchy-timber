@@ -3,7 +3,7 @@
 Omarchy overlay plugin that fronts [`timber`](https://github.com/nnutter/timber)
 managed Git worktrees, mirroring `timber tui`: fuzzy-filter the existing
 worktrees, type `name@repo` to create, `enter` to open in Zed, or use
-the trailing row icons to open in Zed (`Z`) or a Herdr space (`H`).
+the trailing Zed/Herdr logo icons to open in Zed or a Herdr space.
 
 ## Requirements
 
@@ -40,8 +40,9 @@ Keys: the header is a quickfilter field — type to filter
 `enter` open or create in Zed, `esc` clear then close. `tab` keeps the
 platform meaning of switching to the next panel. Creating runs
 `timber create --no-herdr name@repo` and opens the reported path in
-Zed. Each selected row also offers trailing icons: `Z` opens in Zed
-(same as `enter`), while `H` routes to Herdr — on a `name@repo` row
+Zed. Each selected row also offers trailing logo icons: the Zed icon
+opens in Zed (same as `enter`), while the Herdr icon routes to Herdr —
+on a `name@repo` row
 it runs `timber create --herdr name@repo`, on an existing worktree it
 runs `timber herdr space --new name@repo` — the panel dismisses and a
 `Timber Herdr space created` notification confirms instead of opening
