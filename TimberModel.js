@@ -126,6 +126,30 @@ function splitValue(value) {
   return { name: parts.before, repo: parts.after }
 }
 
+// argv (after `timber`) for `timber create [--no-herdr|--herdr]
+// <name@repo>`. withHerdr selects the `--herdr` variant, which also
+// creates a Herdr workspace for the new worktree.
+function createArgs(value, withHerdr) {
+  return ["create", withHerdr ? "--herdr" : "--no-herdr", String(value || "")]
+}
+
+// argv (after `timber`) for `timber herdr space --new <name@repo>`,
+// which sets up (and opens) a Herdr space for an existing worktree.
+function herdrSpaceArgs(value) {
+  return ["herdr", "space", "--new", String(value || "")]
+}
+
+// One two-phase delete step for `armedRemoveValue`. Clicking the
+// armed row confirms the remove; clicking any other row arms it
+// instead (disarming the previous one). A blank click changes
+// nothing and never confirms.
+function armOrConfirmRemove(armed, value) {
+  var v = String(value || "")
+  if (!v) return { armed: String(armed || ""), confirmed: false }
+  if (String(armed || "") === v) return { armed: "", confirmed: true }
+  return { armed: v, confirmed: false }
+}
+
 // argv (after `timber`) for `timber repo add <url-or-path>
 // [--name <name>] [--alias <alias>]`. Blank name/alias flags are omitted
 // and surrounding whitespace is trimmed; returns null when the URL is

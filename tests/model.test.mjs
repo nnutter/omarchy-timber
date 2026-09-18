@@ -9,10 +9,17 @@ vm.createContext(sandbox);
 // TimberModel.js declares bare functions (QML import style), so export
 // them explicitly for the test context.
 vm.runInContext(
-  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue, repoAddArgs };",
+  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue, repoAddArgs, createArgs, herdrSpaceArgs, armOrConfirmRemove };",
   sandbox,
 );
-const { itemsForTerm, splitValue, repoAddArgs } = sandbox.__timberModel;
+const {
+  itemsForTerm,
+  splitValue,
+  repoAddArgs,
+  createArgs,
+  herdrSpaceArgs,
+  armOrConfirmRemove,
+} = sandbox.__timberModel;
 
 const repos = [{ name: "timber" }, { name: "persona" }];
 const worktrees = [
@@ -104,6 +111,68 @@ describe("repoAddArgs", () => {
 
   it("refuses a blank URL", () => {
     assert.equal(repoAddArgs("   ", "repo", "alias"), null);
+  });
+});
+
+describe("createArgs", () => {
+  it("creates without Herdr by default", () => {
+    assert.deepEqual(Array.from(createArgs("newfeat@timber", false)), [
+      "create",
+      "--no-herdr",
+      "newfeat@timber",
+    ]);
+  });
+
+  it("creates with a Herdr workspace when asked", () => {
+    assert.deepEqual(Array.from(createArgs("newfeat@timber", true)), [
+      "create",
+      "--herdr",
+      "newfeat@timber",
+    ]);
+  });
+});
+
+describe("herdrSpaceArgs", () => {
+  it("opens a new Herdr space for the worktree", () => {
+    assert.deepEqual(Array.from(herdrSpaceArgs("alpha@timber")), [
+      "herdr",
+      "space",
+      "--new",
+      "alpha@timber",
+    ]);
+  });
+});
+
+describe("armOrConfirmRemove", () => {
+  // Spread into this realm: the step is a vm-context object.
+  const step = (armed, value) => ({ ...armOrConfirmRemove(armed, value) });
+
+  it("arms on the first click without confirming", () => {
+    assert.deepEqual(step("", "alpha@timber"), {
+      armed: "alpha@timber",
+      confirmed: false,
+    });
+  });
+
+  it("confirms and disarms on the second click", () => {
+    assert.deepEqual(step("alpha@timber", "alpha@timber"), {
+      armed: "",
+      confirmed: true,
+    });
+  });
+
+  it("re-arms to another row instead of confirming", () => {
+    assert.deepEqual(step("alpha@timber", "beta@persona"), {
+      armed: "beta@persona",
+      confirmed: false,
+    });
+  });
+
+  it("ignores a blank click without confirming", () => {
+    assert.deepEqual(step("alpha@timber", ""), {
+      armed: "alpha@timber",
+      confirmed: false,
+    });
   });
 });
 

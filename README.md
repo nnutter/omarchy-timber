@@ -2,7 +2,8 @@
 
 Omarchy overlay plugin that fronts [`timber`](https://github.com/nnutter/timber)
 managed Git worktrees, mirroring `timber tui`: fuzzy-filter the existing
-worktrees, type `name@repo` to create, `enter` to open in Zed.
+worktrees, type `name@repo` to create, `enter` to open in Zed, or use
+the trailing row icons to open in Zed (`Z`) or a Herdr space (`H`).
 
 ## Requirements
 
@@ -36,12 +37,20 @@ omarchy-shell io.github.nnutter.omarchy-timber toggle
 Keys: the header is a quickfilter field — type to filter
 (`@` narrows to repos) with native cursor editing (`←` / `→`,
 `home` / `end`, `backspace`, `ctrl+u` to clear), `↓` / `↑` move,
-`enter` open or create, `esc` clear then close. `tab` keeps the
+`enter` open or create in Zed, `esc` clear then close. `tab` keeps the
 platform meaning of switching to the next panel. Creating runs
 `timber create --no-herdr name@repo` and opens the reported path in
-Zed. Hover a worktree row for its `×`, which runs `timber remove`
-(no `--force`); failures arrive only as a critical desktop
-notification titled `Timber worktree <op> failed`.
+Zed. Each selected row also offers trailing icons: `Z` opens in Zed
+(same as `enter`), while `H` routes to Herdr — on a `name@repo` row
+it runs `timber create --herdr name@repo`, on an existing worktree it
+runs `timber herdr space --new name@repo` — the panel dismisses and a
+`Timber Herdr space created` notification confirms instead of opening
+Zed. Existing worktree
+rows carry a third icon, `×`, which deletes in two phases: the first
+click only arms it (the icon turns red), the second click runs
+`timber remove` (no `--force`). Moving selection to another row,
+editing the filter, or refreshing disarms; failures arrive only as a
+critical desktop notification titled `Timber worktree <op> failed`.
 
 To register a new repo, click the repo icon (GitHub's octicon-repo)
 in the panel header. The form fronts `timber repo add`: enter the

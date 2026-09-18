@@ -24,6 +24,15 @@ Panel {
   property bool cursorActive: false
   property string pendingPath: ""
   property bool repoFormOpen: false
+  // In-flight Herdr routing: createForHerdr marks a `timber create`
+  // run that must notify instead of opening in Zed, and
+  // pendingHerdrValue carries the name@repo for the success message.
+  property bool createForHerdr: false
+  property string pendingHerdrValue: ""
+  // Two-phase delete: the value (name@repo) whose delete icon is
+  // armed (red) and awaiting a second click; blank when nothing is
+  // armed. Monochrome icons are unarmed and only arm on click.
+  property string armedRemoveValue: ""
 
   // True while one of the `timber repo add` form fields owns keyboard
   // focus. The raw key handler below must let those keys through to the
@@ -62,6 +71,7 @@ Panel {
 
   function refresh() {
     root.pendingPath = ""
+    root.armedRemoveValue = ""
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = false
@@ -126,6 +136,8 @@ Panel {
   }
 
   function rebuildDisplay() {
+    // Any list change (filter edit, fresh listing) disarms delete.
+    root.armedRemoveValue = ""
     var items = TimberModel.itemsForTerm(root.repos, root.worktrees, root.filterText)
     displayModel.clear()
     for (var i = 0; i < items.length; i++) {
@@ -151,6 +163,11 @@ Panel {
   // Failures surface only here, never in the widget itself.
   function notifyFailure(subject, detail) {
     Util.execArgv([root.omarchyPath + "/bin/omarchy-notification-send", "-u", "critical", "--app-name", "Timber", "Timber " + subject + " failed", detail])
+  }
+
+  // Successes (Herdr space created) surface as a normal notification.
+  function notify(subject, detail) {
+    Util.execArgv([root.omarchyPath + "/bin/omarchy-notification-send", "--app-name", "Timber", "Timber " + subject, detail])
   }
 
   function openRepoForm() {
@@ -190,19 +207,58 @@ Panel {
     var row = displayModel.get(index)
     if (row.kind !== "open") return
     if (removeProc.running) return
+    root.armedRemoveValue = ""
     removeProc.command = ["timber", "remove", row.value]
     removeProc.running = true
   }
 
+  // Two-phase delete: the first click only arms the row (its delete
+  // icon turns red); a second click while armed runs `timber remove`.
+  // Arming one row disarms any other.
+  function armOrRemoveIndex(index) {
+    if (index < 0 || index >= displayModel.count) return
+    var row = displayModel.get(index)
+    if (row.kind !== "open") return
+    if (removeProc.running) return
+    var step = TimberModel.armOrConfirmRemove(root.armedRemoveValue, row.value)
+    root.armedRemoveValue = step.armed
+    if (step.confirmed) root.removeIndex(index)
+  }
+
+  // The row itself (click or Return) keeps the historical default:
+  // open in Zed. The H icon routes to Herdr instead.
   function activateIndex(index) {
+    root.openInZed(index)
+  }
+
+  function openInZed(index) {
     if (index < 0 || index >= displayModel.count) return
     var row = displayModel.get(index)
     if (row.kind === "open") {
       root.openPath(row.path)
     } else {
       if (createProc.running) return
-      createProc.command = ["timber", "create", "--no-herdr", row.value]
+      createProc.command = ["timber"].concat(TimberModel.createArgs(row.value, false))
       createProc.running = true
+    }
+  }
+
+  function openInHerdr(index) {
+    if (index < 0 || index >= displayModel.count) return
+    var row = displayModel.get(index)
+    if (row.kind === "open") {
+      if (herdrProc.running) return
+      root.pendingHerdrValue = row.value
+      herdrProc.command = ["timber"].concat(TimberModel.herdrSpaceArgs(row.value))
+      herdrProc.running = true
+      root.close()
+    } else {
+      if (createProc.running) return
+      root.createForHerdr = true
+      root.pendingHerdrValue = row.value
+      createProc.command = ["timber"].concat(TimberModel.createArgs(row.value, true))
+      createProc.running = true
+      root.close()
     }
   }
 
@@ -214,6 +270,10 @@ Panel {
     root.refresh()
     Qt.callLater(function() { filterField.forceActiveFocus() })
   }
+
+  // Moving selection to another row disarms a pending delete, so an
+  // armed (red) icon can never trail behind navigation.
+  onSelectedIndexChanged: root.armedRemoveValue = ""
 
   ListModel { id: displayModel }
 
@@ -230,11 +290,19 @@ Panel {
     onExited: function(code) {
       if (code === 0) {
         var path = String(createStdout.text || "").trim().split("\n").pop() || ""
-        if (path) {
+        if (root.createForHerdr) {
+          root.createForHerdr = false
+          var created = root.pendingHerdrValue
+          root.pendingHerdrValue = ""
+          root.notify("Herdr space created", created || path)
+          root.refresh()
+        } else if (path) {
           root.setFilter("")
           root.openPath(path)
         } else root.notifyFailure("worktree create", "reported no path")
       } else {
+        root.createForHerdr = false
+        root.pendingHerdrValue = ""
         var detail = String(createStderr.text || "").trim().split("\n").pop() || ("exit " + code)
         root.notifyFailure("worktree create", detail)
       }
@@ -257,6 +325,28 @@ Panel {
       } else {
         var detail = String(removeStderr.text || "").trim().split("\n").pop() || ("exit " + code)
         root.notifyFailure("worktree remove", detail)
+      }
+    }
+  }
+
+  Process {
+    id: herdrProc
+    stdout: StdioCollector {
+      id: herdrStdout
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: herdrStderr
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      var value = root.pendingHerdrValue
+      root.pendingHerdrValue = ""
+      if (code === 0) {
+        root.notify("Herdr space created", value)
+      } else {
+        var detail = String(herdrStderr.text || "").trim().split("\n").pop() || ("exit " + code)
+        root.notifyFailure("herdr space", detail)
       }
     }
   }
@@ -566,7 +656,7 @@ Panel {
               textFormat: Text.PlainText
               anchors.fill: parent
               anchors.leftMargin: Style.space(12)
-              anchors.rightMargin: Style.space(40)
+              anchors.rightMargin: actionsRow.implicitWidth + Style.space(20)
               verticalAlignment: Text.AlignVCenter
               text: (row.kind === "create" ? "+ " : "") + row.value
               color: root.foreground
@@ -591,39 +681,51 @@ Panel {
               }
             }
 
-            // Stacked after the row MouseArea so its press wins and the
-            // row does not also activate (open in Zed) underneath it.
-            Item {
-              visible: row.selected && row.kind === "open"
+            // Stacked after the row MouseArea so a press on one of
+            // these wins and the row does not also activate underneath.
+            // Z opens in Zed (creating first for `create` rows); H
+            // routes to Herdr instead and posts a notification rather
+            // than opening Zed.
+            Row {
+              id: actionsRow
+              visible: row.selected
               anchors.right: parent.right
-              anchors.top: parent.top
-              anchors.bottom: parent.bottom
-              // Same width as the header repo button so both glyphs share
-              // a right column in any theme.
-              width: repoAddButton.width
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
 
-              Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
+              PanelActionButton {
+                // Single-letter marks stand in for the Zed/Herdr logos
+                // so the buttons render in any panel font.
+                iconText: "Z"
+                tooltipText: row.kind === "open" ? "Open in Zed" : "Create and open in Zed"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                enabled: !createProc.running && !herdrProc.running
+                onClicked: root.openInZed(row.index)
+              }
+
+              PanelActionButton {
+                iconText: "H"
+                tooltipText: row.kind === "open" ? "Open in Herdr" : "Create in Herdr"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                enabled: !createProc.running && !herdrProc.running
+                onClicked: root.openInHerdr(row.index)
+              }
+
+              PanelActionButton {
+                visible: row.kind === "open"
                 // nf-md-delete (U+F0159): the destructive-row glyph the
                 // first-party bluetooth panel uses for Forget.
-                text: "󰅙"
-                color: Color.urgent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-              }
-
-              MouseArea {
-                id: removeMouse
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.removeIndex(row.index)
-              }
-
-              PanelToolTip {
-                visible: removeMouse.containsMouse
-                text: "Remove " + row.value
+                // Monochrome until the first click arms it; red while
+                // armed, when a second click runs `timber remove`.
+                iconText: "󰅙"
+                tooltipText: (row.value === root.armedRemoveValue ? "Click again to remove " : "Remove ") + row.value
+                foreground: row.value === root.armedRemoveValue ? Color.urgent : root.foreground
                 fontFamily: root.fontFamily
+                enabled: !removeProc.running
+                onClicked: root.armOrRemoveIndex(row.index)
               }
             }
           }
