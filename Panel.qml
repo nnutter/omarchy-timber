@@ -694,10 +694,8 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(4)
 
-              PanelActionButton {
-                // Single-letter marks stand in for the Zed/Herdr logos
-                // so the buttons render in any panel font.
-                iconText: "Z"
+              SvgActionButton {
+                iconSource: "zed.svg"
                 tooltipText: row.kind === "open" ? "Open in Zed" : "Create and open in Zed"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -705,8 +703,8 @@ Panel {
                 onClicked: root.openInZed(row.index)
               }
 
-              PanelActionButton {
-                iconText: "H"
+              SvgActionButton {
+                iconSource: "herdr.svg"
                 tooltipText: row.kind === "open" ? "Open in Herdr" : "Create in Herdr"
                 foreground: root.foreground
                 fontFamily: root.fontFamily

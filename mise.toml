@@ -7,7 +7,7 @@ node = "24"
 
 [tasks.check]
 description = "Syntax-check the plugin JavaScript and lint the QML"
-run = "node --check TimberModel.js && node --check tests/model.test.mjs && bash tests/qml_lint.sh Panel.qml"
+run = "node --check TimberModel.js && node --check tests/model.test.mjs && bash tests/qml_lint.sh Panel.qml && bash tests/qml_lint.sh SvgActionButton.qml"
 
 [tasks.test]
 description = "Run TimberModel unit tests"
@@ -23,7 +23,7 @@ set -euo pipefail
 id="io.github.nnutter.omarchy-timber"
 dest="${HOME}/.config/omarchy/plugins/${id}"
 mkdir -p "$dest"
-cp manifest.json Panel.qml TimberModel.js "$dest/"
+cp manifest.json Panel.qml SvgActionButton.qml TimberModel.js herdr.svg zed.svg "$dest/"
 if command -v omarchy-shell >/dev/null 2>&1; then
   omarchy-shell shell rescanPlugins || echo "rescan failed: is omarchy-shell running?" >&2
   omarchy restart shell
