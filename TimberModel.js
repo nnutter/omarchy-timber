@@ -16,7 +16,7 @@ function parseListing(text) {
     if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
     else if (parts[0] === "W" && parts[1] && parts[2]) {
       var split = splitValue(parts[1])
-      if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2] })
+      if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2], lastCommitAt: Number(parts[3]) || 0 })
     }
   }
   return { repos: repos, worktrees: worktrees }
@@ -111,9 +111,24 @@ function filterWorktrees(term, worktrees) {
   return out
 }
 
+function compareText(a, b) {
+  return a < b ? -1 : (a > b ? 1 : 0)
+}
+
+// Sort a copy. Missing or tied commit dates fall back to name@repo.
+function sortWorktrees(worktrees, mode) {
+  return worktrees.slice().sort(function(a, b) {
+    if (mode === "repo") return compareText(a.repo, b.repo) || compareText(a.name, b.name)
+    if (mode === "worktree") return compareText(a.name, b.name) || compareText(a.repo, b.repo)
+    var dateOrder = (b.lastCommitAt || 0) - (a.lastCommitAt || 0)
+    return dateOrder || compareText(worktreeValue(a), worktreeValue(b))
+  })
+}
+
 // Mirror wizardItemsForTerm: existing worktrees first, then one `create`
 // row per matching repo when the term is a qualified `name@repo`.
-function itemsForTerm(repos, worktrees, term) {
+function itemsForTerm(repos, worktrees, term, sort) {
+  worktrees = sortWorktrees(worktrees || [], sort || "recency")
   var t = String(term || "")
   var items = []
   var ranks = filterWorktrees(t, worktrees || [])

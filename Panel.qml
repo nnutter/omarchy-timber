@@ -20,6 +20,7 @@ Panel {
   property var repos: []
   property var worktrees: []
   property string filterText: ""
+  property string sortMode: "recency"
   property int selectedIndex: 0
   property string selectedID: ""
   property bool cursorActive: false
@@ -67,7 +68,8 @@ Panel {
     'printf "%s\\n" "$repos" | while IFS= read -r repo; do [ -n "$repo" ] || continue;',
     '  for d in "$root/$repo"/**/"$repo"; do [ -e "$d/.git" ] || continue;',
     '    parent=${d%/*}; name=${parent#"$root/$repo"/}; [ -n "$name" ] || continue;',
-    '    printf "W\\t%s@%s\\t%s\\n" "$name" "$repo" "$d";',
+    '    stamp=$(git -C "$d" log -1 --format=%ct 2>/dev/null) || stamp=$(stat -c %Y -- "$d" 2>/dev/null);',
+    '    printf "W\\t%s@%s\\t%s\\t%s\\n" "$name" "$repo" "$d" "$stamp";',
     '  done;',
     'done'
   ].join("\n")
@@ -148,7 +150,7 @@ Panel {
   function rebuildDisplay() {
     // Any list change (filter edit, fresh listing) disarms delete.
     root.armedRemoveValue = ""
-    var items = TimberModel.itemsForTerm(root.repos, root.worktrees, root.filterText)
+    var items = TimberModel.itemsForTerm(root.repos, root.worktrees, root.filterText, root.sortMode)
     displayModel.clear()
     for (var i = 0; i < items.length; i++) {
       displayModel.append(items[i])
@@ -569,6 +571,23 @@ Panel {
               if (root.repoFormOpen) root.closeRepoForm()
               else root.openRepoForm()
             }
+          }
+        }
+
+        ButtonGroup {
+          anchors.horizontalCenter: parent.horizontalCenter
+          options: [
+            { value: "recency", label: "Recency" },
+            { value: "repo", label: "Repo" },
+            { value: "worktree", label: "Worktree" }
+          ]
+          value: root.sortMode
+          focusable: false
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          onChanged: function(value) {
+            root.sortMode = value
+            root.rebuildDisplay()
           }
         }
 

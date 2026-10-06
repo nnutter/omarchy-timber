@@ -9,7 +9,7 @@ vm.createContext(sandbox);
 // TimberModel.js declares bare functions (QML import style), so export
 // them explicitly for the test context.
 vm.runInContext(
-  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue, repoAddArgs, createArgs, herdrSpaceArgs, armOrConfirmRemove, selectedItemIndex };",
+  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue, repoAddArgs, createArgs, herdrSpaceArgs, armOrConfirmRemove, selectedItemIndex, parseListing };",
   sandbox,
 );
 const {
@@ -20,6 +20,7 @@ const {
   herdrSpaceArgs,
   armOrConfirmRemove,
   selectedItemIndex,
+  parseListing,
 } = sandbox.__timberModel;
 
 const repos = [{ name: "timber" }, { name: "persona" }];
@@ -37,23 +38,23 @@ const kinds = (items) => Array.from(items, (item) => item.kind);
 describe("itemsForTerm", () => {
   it("lists every worktree on an empty term", () => {
     assert.deepEqual(values(itemsForTerm(repos, worktrees, "")), [
+      "alpha@persona",
       "alpha@timber",
       "beta@persona",
-      "alpha@persona",
     ]);
   });
 
   it("fuzzy-filters on the worktree half", () => {
     assert.deepEqual(values(itemsForTerm(repos, worktrees, "alp")), [
-      "alpha@timber",
       "alpha@persona",
+      "alpha@timber",
     ]);
   });
 
   it("keeps every repo while the repo half is empty", () => {
     assert.deepEqual(values(itemsForTerm(repos, worktrees, "alpha@")), [
-      "alpha@timber",
       "alpha@persona",
+      "alpha@timber",
     ]);
   });
 
@@ -79,6 +80,32 @@ describe("itemsForTerm", () => {
     const items = itemsForTerm(repos, worktrees, "beta@persona");
     assert.deepEqual(kinds(items), ["open"]);
     assert.deepEqual(values(items), ["beta@persona"]);
+  });
+});
+
+describe("display sorting", () => {
+  const rows = [
+    { name: "z", repo: "a", lastCommitAt: 200 },
+    { name: "a", repo: "z", lastCommitAt: 100 },
+    { name: "a", repo: "a", lastCommitAt: 200 },
+    { name: "b", repo: "a" },
+  ];
+  for (const [mode, expected] of [
+    [undefined, ["a@a", "z@a", "a@z", "b@a"]],
+    ["repo", ["a@a", "b@a", "z@a", "a@z"]],
+    ["worktree", ["a@a", "a@z", "b@a", "z@a"]],
+  ]) {
+    it(`orders filtered rows by ${mode || "recency by default"}`, () => {
+      assert.deepEqual(values(itemsForTerm([], rows, "@a", mode)), expected.filter(v => v.endsWith("@a")));
+      assert.deepEqual(values(itemsForTerm([], rows, "", mode)), expected);
+      assert.equal(rows[0].name, "z", "sorting does not reorder the cache");
+    });
+  }
+  it("uses scan timestamps and tolerates old records without a date", () => {
+    const listing = parseListing("R\ttimber\nW\told@timber\t/tmp/old\nW\tnew@timber\t/tmp/new\t300\n");
+    const items = itemsForTerm(listing.repos, listing.worktrees, "");
+    assert.deepEqual(values(items), ["new@timber", "old@timber"]);
+    assert.equal(items[0].path, "/tmp/new");
   });
 });
 
