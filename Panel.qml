@@ -23,6 +23,8 @@ Panel {
   property int selectedIndex: 0
   property string selectedID: ""
   property bool cursorActive: false
+  property bool listing: true
+  property bool refreshQueued: false
   property string pendingPath: ""
   property bool repoFormOpen: false
   // In-flight Herdr routing: createForHerdr marks a `timber create`
@@ -78,7 +80,24 @@ Panel {
     root.selectedID = ""
     root.cursorActive = false
     root.syncFilterField()
+    root.refreshInBackground()
+  }
+
+  function refreshInBackground() {
+    if (listProc.running) {
+      root.refreshQueued = true
+      return
+    }
     listProc.running = true
+  }
+
+  function presentFromCache() {
+    root.filterText = ""
+    root.selectedIndex = 0
+    root.selectedID = ""
+    root.cursorActive = false
+    root.rebuildDisplay()
+    root.syncFilterField()
   }
 
   function setFilter(nextFilter) {
@@ -248,7 +267,8 @@ Panel {
 
   onOpenedChanged: if (opened) {
     root.closeRepoForm()
-    root.refresh()
+    root.presentFromCache()
+    root.refreshInBackground()
     Qt.callLater(function() { filterField.forceActiveFocus() })
   }
 
@@ -258,6 +278,15 @@ Panel {
     root.armedRemoveValue = ""
     if (selectedIndex >= 0 && selectedIndex < displayModel.count)
       root.selectedID = TimberModel.itemID(displayModel.get(selectedIndex))
+  }
+
+  Component.onCompleted: root.refreshInBackground()
+
+  Timer {
+    interval: 60000
+    running: true
+    repeat: true
+    onTriggered: if (!root.opened) root.refreshInBackground()
   }
 
   ListModel { id: displayModel }
@@ -361,12 +390,17 @@ Panel {
     id: listProc
     command: ["bash", "-lc", root.listScript]
     stdout: StdioCollector {
+      id: listStdout
       waitForEnd: true
-      onStreamFinished: root.applyListOutput(text)
     }
     onExited: function(code) {
-      if (code !== 0 && displayModel.count === 0)
-        root.notifyFailure("worktree list", "timber repo list exited " + code)
+      root.listing = false
+      if (code === 0) root.applyListOutput(listStdout.text)
+      else root.notifyFailure("worktree list", "filesystem scan exited " + code)
+      if (root.refreshQueued) {
+        root.refreshQueued = false
+        Qt.callLater(root.refreshInBackground)
+      }
     }
   }
 
@@ -718,7 +752,7 @@ Panel {
           textFormat: Text.PlainText
           visible: displayModel.count === 0
           width: parent.width
-          text: root.worktrees.length === 0 ? "No worktrees yet — type name@repo to create one" : "No matches"
+          text: root.listing ? "Loading worktrees…" : (root.worktrees.length === 0 ? "No worktrees yet — type name@repo to create one" : "No matches")
           color: root.foreground
           opacity: 0.7
           font.family: root.fontFamily
