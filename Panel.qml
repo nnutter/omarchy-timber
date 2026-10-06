@@ -117,21 +117,9 @@ Panel {
   }
 
   function applyListOutput(text) {
-    var repos = []
-    var worktrees = []
-    var lines = String(text || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i]
-      if (!line) continue
-      var parts = line.split("\t")
-      if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
-      else if (parts[0] === "W" && parts[1] && parts[2]) {
-        var split = TimberModel.splitValue(parts[1])
-        if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2] })
-      }
-    }
-    root.repos = repos
-    root.worktrees = worktrees
+    var listing = TimberModel.parseListing(text)
+    root.repos = listing.repos
+    root.worktrees = listing.worktrees
     root.rebuildDisplay()
   }
 

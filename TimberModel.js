@@ -6,6 +6,22 @@
 // worktrees:[{ name: "feature/login", repo: "timber" }]
 // items:    [{ kind: "open"|"create", name, repo, value: "name@repo" }]
 
+// Parse the repository/worktree records produced by the filesystem scan.
+function parseListing(text) {
+  var repos = []
+  var worktrees = []
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var parts = lines[i].split("\t")
+    if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
+    else if (parts[0] === "W" && parts[1] && parts[2]) {
+      var split = splitValue(parts[1])
+      if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2] })
+    }
+  }
+  return { repos: repos, worktrees: worktrees }
+}
+
 // Case-insensitive fuzzy match: every char of term appears in order.
 function fuzzyMatch(term, target) {
   var t = String(term || "").toLowerCase()
