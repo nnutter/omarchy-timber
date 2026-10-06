@@ -48,6 +48,21 @@ Panel {
   property int contentSpacing: Style.spacing.md
   property int rowHeight: Math.max(Style.space(44), Style.font.body + Style.spacing.rowPaddingX * 2)
   property int maxVisibleRows: 8
+  readonly property int actionSize: Style.space(22)
+  readonly property int actionsWidth: root.actionSize * 3 + Style.space(4) * 2
+  readonly property real popupWidth: {
+    var widest = 0
+    for (var i = 0; i < displayModel.count; i++) {
+      var item = displayModel.get(i)
+      var nameWidth = rowFontMetrics.advanceWidth((item.kind === "create" ? "+ " : "") + item.value)
+      var badgesWidth = badgeFontMetrics.advanceWidth(item.statusText) + badgeFontMetrics.advanceWidth(item.todoText)
+      if (item.statusText && item.todoText) badgesWidth += Style.space(4)
+      widest = Math.max(widest, nameWidth + badgesWidth)
+    }
+    // Row insets, gaps, reserved actions, popup padding, and rendering slop.
+    var chrome = Style.space(48) + root.actionsWidth + panel.padding * 2
+    return Math.max(Style.space(300), Math.min(widest + chrome, Style.space(600)))
+  }
   readonly property int visibleRows: Math.max(1, Math.min(displayModel.count, root.maxVisibleRows))
   readonly property int listHeight: root.visibleRows * root.rowHeight + (root.visibleRows - 1) * Style.space(4)
 
@@ -290,6 +305,18 @@ Panel {
     onTriggered: if (!root.opened) root.refreshInBackground()
   }
 
+  FontMetrics {
+    id: rowFontMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.title
+  }
+
+  FontMetrics {
+    id: badgeFontMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.body
+  }
+
   ListModel { id: displayModel }
 
   Process {
@@ -425,7 +452,7 @@ Panel {
     // The quickfilter owns typing, so it takes focus on open (with a
     // visible text cursor) instead of the bare key catcher.
     focusTarget: filterField
-    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentWidth: panel.fittedContentWidth(root.popupWidth)
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
 
     // Raw key handling instead of PanelKeyCatcher: the quickfilter is a
@@ -702,7 +729,7 @@ Panel {
               opacity: row.kind === "create" && !row.selected ? 0.72 : 1.0
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
-              elide: Text.ElideRight
+              elide: Text.ElideMiddle
             }
 
             Row {
@@ -755,6 +782,7 @@ Panel {
             // than opening Zed.
             Row {
               id: actionsRow
+              width: root.actionsWidth
               visible: row.selected
               anchors.right: parent.right
               anchors.rightMargin: Style.space(8)
@@ -762,6 +790,7 @@ Panel {
               spacing: Style.space(4)
 
               SvgActionButton {
+                size: root.actionSize
                 iconSource: "zed.svg"
                 tooltipText: row.kind === "open" ? "Open in Zed" : "Create and open in Zed"
                 foreground: root.foreground
@@ -771,6 +800,7 @@ Panel {
               }
 
               SvgActionButton {
+                size: root.actionSize
                 iconSource: "herdr.svg"
                 tooltipText: row.kind === "open" ? "Open in Herdr" : "Create in Herdr"
                 foreground: root.foreground
@@ -780,7 +810,8 @@ Panel {
               }
 
               PanelActionButton {
-                visible: row.kind === "open"
+                size: root.actionSize
+                opacity: row.kind === "open" ? 1 : 0
                 // nf-md-delete (U+F0159): the destructive-row glyph the
                 // first-party bluetooth panel uses for Forget.
                 // Monochrome until the first click arms it; red while
@@ -789,7 +820,7 @@ Panel {
                 tooltipText: (row.value === root.armedRemoveValue ? "Click again to remove " : "Remove ") + row.value
                 foreground: row.value === root.armedRemoveValue ? Color.urgent : root.foreground
                 fontFamily: root.fontFamily
-                enabled: !removeProc.running
+                enabled: row.kind === "open" && !removeProc.running
                 onClicked: root.armOrRemoveIndex(row.index)
               }
             }
