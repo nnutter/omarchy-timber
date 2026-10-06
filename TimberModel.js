@@ -136,6 +136,19 @@ function itemsForTerm(repos, worktrees, term) {
   return items
 }
 
+// Kind distinguishes a create row from an existing worktree of the same name.
+function itemID(item) {
+  return item.kind + ":" + item.value
+}
+
+// Keep selection on the same row when a refresh changes its position.
+function selectedItemIndex(items, selectedID) {
+  for (var i = 0; i < items.length; i++) {
+    if (itemID(items[i]) === selectedID) return i
+  }
+  return 0
+}
+
 function splitValue(value) {
   var parts = cutLast(value, "@")
   if (!parts.qualified || !parts.before || !parts.after) return null

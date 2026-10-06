@@ -21,6 +21,7 @@ Panel {
   property var worktrees: []
   property string filterText: ""
   property int selectedIndex: 0
+  property string selectedID: ""
   property bool cursorActive: false
   property string pendingPath: ""
   property bool repoFormOpen: false
@@ -74,6 +75,7 @@ Panel {
     root.armedRemoveValue = ""
     root.filterText = ""
     root.selectedIndex = 0
+    root.selectedID = ""
     root.cursorActive = false
     root.syncFilterField()
     listProc.running = true
@@ -82,6 +84,7 @@ Panel {
   function setFilter(nextFilter) {
     root.filterText = nextFilter
     root.selectedIndex = 0
+    root.selectedID = ""
     root.cursorActive = true
     root.rebuildDisplay()
     root.syncFilterField()
@@ -131,9 +134,8 @@ Panel {
     for (var i = 0; i < items.length; i++) {
       displayModel.append(items[i])
     }
-    if (displayModel.count === 0) root.selectedIndex = 0
-    else if (root.selectedIndex >= displayModel.count) root.selectedIndex = displayModel.count - 1
-    else if (root.selectedIndex < 0) root.selectedIndex = 0
+    root.selectedIndex = TimberModel.selectedItemIndex(items, root.selectedID)
+    root.selectedID = items.length ? TimberModel.itemID(items[root.selectedIndex]) : ""
     Qt.callLater(function() {
       if (displayModel.count > 0) resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
     })
@@ -252,7 +254,11 @@ Panel {
 
   // Moving selection to another row disarms a pending delete, so an
   // armed (red) icon can never trail behind navigation.
-  onSelectedIndexChanged: root.armedRemoveValue = ""
+  onSelectedIndexChanged: {
+    root.armedRemoveValue = ""
+    if (selectedIndex >= 0 && selectedIndex < displayModel.count)
+      root.selectedID = TimberModel.itemID(displayModel.get(selectedIndex))
+  }
 
   ListModel { id: displayModel }
 

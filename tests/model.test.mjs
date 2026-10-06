@@ -9,7 +9,7 @@ vm.createContext(sandbox);
 // TimberModel.js declares bare functions (QML import style), so export
 // them explicitly for the test context.
 vm.runInContext(
-  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue, repoAddArgs, createArgs, herdrSpaceArgs, armOrConfirmRemove };",
+  src + "\n;globalThis.__timberModel = { itemsForTerm, splitValue, repoAddArgs, createArgs, herdrSpaceArgs, armOrConfirmRemove, selectedItemIndex };",
   sandbox,
 );
 const {
@@ -19,6 +19,7 @@ const {
   createArgs,
   herdrSpaceArgs,
   armOrConfirmRemove,
+  selectedItemIndex,
 } = sandbox.__timberModel;
 
 const repos = [{ name: "timber" }, { name: "persona" }];
@@ -173,6 +174,19 @@ describe("armOrConfirmRemove", () => {
       armed: "alpha@timber",
       confirmed: false,
     });
+  });
+});
+
+describe("selection across refreshes", () => {
+  it("follows the selected worktree through insertion and reordering", () => {
+    const rows = [
+      { kind: "open", value: "new@timber" },
+      { kind: "create", value: "alpha@timber" },
+      { kind: "open", value: "alpha@timber" },
+    ];
+    assert.equal(selectedItemIndex(rows, "open:alpha@timber"), 2);
+    assert.equal(selectedItemIndex(rows, "open:removed@timber"), 0);
+    assert.equal(selectedItemIndex([], "open:alpha@timber"), 0);
   });
 });
 
