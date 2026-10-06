@@ -690,6 +690,13 @@ Panel {
           spacing: Style.space(4)
           boundsBehavior: Flickable.StopAtBounds
 
+          HoverHandler {
+            onHoveredChanged: if (!hovered) {
+              root.cursorActive = false
+              root.armedRemoveValue = ""
+            }
+          }
+
           // Plain item instead of CursorSurface: selection is a slim
           // accent marker at the leading edge, not a full-row box.
           delegate: Item {
@@ -760,6 +767,13 @@ Panel {
               }
             }
 
+            HoverHandler {
+              onHoveredChanged: if (hovered) {
+                root.cursorActive = true
+                root.selectedIndex = row.index
+              }
+            }
+
             MouseArea {
               anchors.fill: parent
               hoverEnabled: true
@@ -783,7 +797,7 @@ Panel {
             Row {
               id: actionsRow
               width: root.actionsWidth
-              visible: row.selected
+              opacity: row.selected ? 1 : 0.15
               anchors.right: parent.right
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
@@ -796,7 +810,7 @@ Panel {
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 enabled: !createProc.running && !herdrProc.running
-                onClicked: root.openInZed(row.index)
+                onClicked: if (row.selected) root.openInZed(row.index)
               }
 
               SvgActionButton {
@@ -806,7 +820,7 @@ Panel {
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 enabled: !createProc.running && !herdrProc.running
-                onClicked: root.openInHerdr(row.index)
+                onClicked: if (row.selected) root.openInHerdr(row.index)
               }
 
               PanelActionButton {
@@ -821,7 +835,7 @@ Panel {
                 foreground: row.value === root.armedRemoveValue ? Color.urgent : root.foreground
                 fontFamily: root.fontFamily
                 enabled: row.kind === "open" && !removeProc.running
-                onClicked: root.armOrRemoveIndex(row.index)
+                onClicked: if (row.selected) root.armOrRemoveIndex(row.index)
               }
             }
           }
