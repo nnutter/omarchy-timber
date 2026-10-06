@@ -119,7 +119,7 @@ function itemsForTerm(repos, worktrees, term) {
   var ranks = filterWorktrees(t, worktrees || [])
   for (var i = 0; i < ranks.length; i++) {
     var w = (worktrees || [])[ranks[i].index]
-    items.push({ kind: "open", name: w.name, repo: w.repo, value: worktreeValue(w) })
+    items.push({ kind: "open", name: w.name, repo: w.repo, value: worktreeValue(w), path: w.path || "" })
   }
 
   var termParts = cutLast(t, "@")
@@ -131,7 +131,7 @@ function itemsForTerm(repos, worktrees, term) {
   for (var k = 0; k < repoRanks.length; k++) {
     var repo = (repos || [])[repoRanks[k].index]
     if (hasWorktree(worktrees || [], termParts.before, repo.name)) continue
-    items.push({ kind: "create", name: termParts.before, repo: repo.name, value: termParts.before + "@" + repo.name })
+    items.push({ kind: "create", name: termParts.before, repo: repo.name, value: termParts.before + "@" + repo.name, path: "" })
   }
   return items
 }

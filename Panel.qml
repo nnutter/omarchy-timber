@@ -129,16 +129,7 @@ Panel {
     var items = TimberModel.itemsForTerm(root.repos, root.worktrees, root.filterText)
     displayModel.clear()
     for (var i = 0; i < items.length; i++) {
-      var path = ""
-      if (items[i].kind === "open") {
-        for (var j = 0; j < root.worktrees.length; j++) {
-          if (root.worktrees[j].name === items[i].name && root.worktrees[j].repo === items[i].repo) {
-            path = root.worktrees[j].path
-            break
-          }
-        }
-      }
-      displayModel.append({ kind: items[i].kind, name: items[i].name, repo: items[i].repo, value: items[i].value, path: path })
+      displayModel.append(items[i])
     }
     if (displayModel.count === 0) root.selectedIndex = 0
     else if (root.selectedIndex >= displayModel.count) root.selectedIndex = displayModel.count - 1
