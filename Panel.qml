@@ -51,11 +51,8 @@ Panel {
   readonly property int visibleRows: Math.max(1, Math.min(displayModel.count, root.maxVisibleRows))
   readonly property int listHeight: root.visibleRows * root.rowHeight + (root.visibleRows - 1) * Style.space(4)
 
-  // Same enumeration timber's own zsh completion uses: registered repo
-  // names plus a scan of the worktree root. `timber list` is avoided on
-  // purpose — its styled two-per-row table still emits ANSI under
-  // NO_COLOR and it enriches every row with git status, so one missing
-  // worktree directory fails the whole listing.
+  // The filesystem scan owns membership. Optional JSON enrichment supplies
+  // Status/Todo badges without hiding rows if timber list fails.
   readonly property string listScript: [
     'data_home=${XDG_DATA_HOME:-$HOME/.local/share};',
     'root=${TIMBER_WORKTREE_ROOT:-$HOME/worktrees};',
@@ -71,7 +68,9 @@ Panel {
     '    stamp=$(git -C "$d" log -1 --format=%ct 2>/dev/null) || stamp=$(stat -c %Y -- "$d" 2>/dev/null);',
     '    printf "W\\t%s@%s\\t%s\\t%s\\n" "$name" "$repo" "$d" "$stamp";',
     '  done;',
-    'done'
+    'done;',
+    'details=$(timber list --json 2>/dev/null) && printf "D\\t%s\\n" "$details";',
+    'exit 0'
   ].join("\n")
 
   function refresh() {
@@ -672,6 +671,8 @@ Panel {
             required property string kind
             required property string value
             required property string path
+            required property string statusText
+            required property string todoText
 
             readonly property bool selected: root.cursorActive && index === root.selectedIndex
 
@@ -694,7 +695,7 @@ Panel {
               textFormat: Text.PlainText
               anchors.fill: parent
               anchors.leftMargin: Style.space(12)
-              anchors.rightMargin: actionsRow.implicitWidth + Style.space(20)
+              anchors.rightMargin: badgesRow.implicitWidth + actionsRow.implicitWidth + Style.space(28)
               verticalAlignment: Text.AlignVCenter
               text: (row.kind === "create" ? "+ " : "") + row.value
               color: root.foreground
@@ -702,6 +703,34 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               elide: Text.ElideRight
+            }
+
+            Row {
+              id: badgesRow
+              anchors.right: actionsRow.left
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
+
+              Text {
+                textFormat: Text.PlainText
+                text: row.statusText
+                visible: text !== ""
+                color: root.foreground
+                opacity: 0.7
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                text: row.todoText
+                visible: text !== ""
+                color: root.foreground
+                opacity: 0.7
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
             }
 
             MouseArea {

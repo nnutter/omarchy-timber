@@ -83,6 +83,44 @@ describe("itemsForTerm", () => {
   });
 });
 
+describe("Status and Todo enrichment", () => {
+  const scan = "R\ttimber\nW\talpha@timber\t/tmp/alpha\t100\n";
+  const display = (json) => {
+    const listing = parseListing(scan + "D\t" + json + "\n");
+    return itemsForTerm(listing.repos, listing.worktrees, "");
+  };
+  for (const [detail, status, todo] of [
+    [{ ahead: 2, behind: 3, todoDone: 1, todoTotal: 4 }, "↑2 ↓3", "1/4"],
+    [{ merged: true, ahead: 2, todoDone: 4, todoTotal: 4 }, "merged", "4/4"],
+    [{ statusError: true, merged: true, ahead: 2 }, "error", ""],
+    [{ behind: 3, todoTotal: 2 }, "↓3", "0/2"],
+    [{ ahead: 0, behind: 0, todoTotal: 0 }, "", ""],
+    [{ ahead: "2", merged: "false", todoTotal: "4" }, "", ""],
+  ]) {
+    it(`renders ${JSON.stringify(detail)} as quiet or explicit badges`, () => {
+      const items = display(JSON.stringify([{ name: "alpha", repo: "timber", upstream: "origin/main", ...detail }]));
+      assert.equal(items[0].statusText, status);
+      assert.equal(items[0].todoText, todo);
+      assert.equal(items[0].path, "/tmp/alpha");
+    });
+  }
+  it("keeps scanned rows when enrichment is absent, malformed, or unrelated", () => {
+    for (const json of ["", "not JSON", "{}", "null", '[null, {"name":"ghost","repo":"timber","ahead":5}]']) {
+      const items = display(json);
+      assert.deepEqual(values(items), ["alpha@timber"]);
+      assert.equal(items[0].statusText, "");
+      assert.equal(items[0].todoText, "");
+    }
+  });
+  it("never transfers badges to a create suggestion", () => {
+    const listing = parseListing(scan + 'D\t[{"name":"ghost","repo":"timber","ahead":5}]\n');
+    const items = itemsForTerm(listing.repos, listing.worktrees, "ghost@timber");
+    assert.deepEqual(kinds(items), ["create"]);
+    assert.equal(items[0].statusText, "");
+    assert.equal(items[0].todoText, "");
+  });
+});
+
 describe("display sorting", () => {
   const rows = [
     { name: "z", repo: "a", lastCommitAt: 200 },

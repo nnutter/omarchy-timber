@@ -10,14 +10,33 @@
 function parseListing(text) {
   var repos = []
   var worktrees = []
+  var details = {}
   var lines = String(text || "").split("\n")
   for (var i = 0; i < lines.length; i++) {
     var parts = lines[i].split("\t")
-    if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
+    if (parts[0] === "D") {
+      try {
+        var rows = JSON.parse(lines[i].slice(2))
+        if (Array.isArray(rows)) {
+          for (var j = 0; j < rows.length; j++) {
+            var row = rows[j]
+            if (row && typeof row.name === "string" && typeof row.repo === "string")
+              details["worktree:" + worktreeValue(row)] = row
+          }
+        }
+      } catch (error) {
+        // Optional enrichment must never invalidate the filesystem listing.
+      }
+    } else if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
     else if (parts[0] === "W" && parts[1] && parts[2]) {
       var split = splitValue(parts[1])
       if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2], lastCommitAt: Number(parts[3]) || 0 })
     }
+  }
+  for (var k = 0; k < worktrees.length; k++) {
+    var detail = details["worktree:" + worktreeValue(worktrees[k])] || {}
+    worktrees[k].statusText = listStatusText(detail)
+    worktrees[k].todoText = todoText(detail)
   }
   return { repos: repos, worktrees: worktrees }
 }
@@ -111,6 +130,22 @@ function filterWorktrees(term, worktrees) {
   return out
 }
 
+// Mirror timber ls Status without its upstream suffix.
+function listStatusText(detail) {
+  if (detail.statusError === true) return "error"
+  if (detail.merged === true) return "merged"
+  var parts = []
+  if (typeof detail.ahead === "number" && detail.ahead > 0) parts.push("↑" + detail.ahead)
+  if (typeof detail.behind === "number" && detail.behind > 0) parts.push("↓" + detail.behind)
+  return parts.join(" ")
+}
+
+function todoText(detail) {
+  if (typeof detail.todoTotal !== "number" || detail.todoTotal <= 0) return ""
+  var done = typeof detail.todoDone === "number" ? detail.todoDone : 0
+  return done + "/" + detail.todoTotal
+}
+
 function compareText(a, b) {
   return a < b ? -1 : (a > b ? 1 : 0)
 }
@@ -134,7 +169,7 @@ function itemsForTerm(repos, worktrees, term, sort) {
   var ranks = filterWorktrees(t, worktrees || [])
   for (var i = 0; i < ranks.length; i++) {
     var w = (worktrees || [])[ranks[i].index]
-    items.push({ kind: "open", name: w.name, repo: w.repo, value: worktreeValue(w), path: w.path || "" })
+    items.push({ kind: "open", name: w.name, repo: w.repo, value: worktreeValue(w), path: w.path || "", statusText: w.statusText || "", todoText: w.todoText || "" })
   }
 
   var termParts = cutLast(t, "@")
@@ -146,7 +181,7 @@ function itemsForTerm(repos, worktrees, term, sort) {
   for (var k = 0; k < repoRanks.length; k++) {
     var repo = (repos || [])[repoRanks[k].index]
     if (hasWorktree(worktrees || [], termParts.before, repo.name)) continue
-    items.push({ kind: "create", name: termParts.before, repo: repo.name, value: termParts.before + "@" + repo.name, path: "" })
+    items.push({ kind: "create", name: termParts.before, repo: repo.name, value: termParts.before + "@" + repo.name, path: "", statusText: "", todoText: "" })
   }
   return items
 }
