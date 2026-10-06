@@ -20,8 +20,12 @@ Panel {
   property var repos: []
   property var worktrees: []
   property string filterText: ""
+  property string sortMode: "recency"
   property int selectedIndex: 0
+  property string selectedID: ""
   property bool cursorActive: false
+  property bool listing: true
+  property bool refreshQueued: false
   property string pendingPath: ""
   property bool repoFormOpen: false
   // In-flight Herdr routing: createForHerdr marks a `timber create`
@@ -44,14 +48,26 @@ Panel {
   property int contentSpacing: Style.spacing.md
   property int rowHeight: Math.max(Style.space(44), Style.font.body + Style.spacing.rowPaddingX * 2)
   property int maxVisibleRows: 8
+  readonly property int actionSize: Style.space(22)
+  readonly property int actionsWidth: root.actionSize * 3 + Style.space(4) * 2
+  readonly property real popupWidth: {
+    var widest = 0
+    for (var i = 0; i < displayModel.count; i++) {
+      var item = displayModel.get(i)
+      var nameWidth = rowFontMetrics.advanceWidth((item.kind === "create" ? "+ " : "") + item.value)
+      var badgesWidth = badgeFontMetrics.advanceWidth(item.statusText) + badgeFontMetrics.advanceWidth(item.todoText)
+      if (item.statusText && item.todoText) badgesWidth += Style.space(4)
+      widest = Math.max(widest, nameWidth + badgesWidth)
+    }
+    // Row insets, gaps, reserved actions, popup padding, and rendering slop.
+    var chrome = Style.space(48) + root.actionsWidth + panel.padding * 2
+    return Math.max(Style.space(300), Math.min(widest + chrome, Style.space(600)))
+  }
   readonly property int visibleRows: Math.max(1, Math.min(displayModel.count, root.maxVisibleRows))
   readonly property int listHeight: root.visibleRows * root.rowHeight + (root.visibleRows - 1) * Style.space(4)
 
-  // Same enumeration timber's own zsh completion uses: registered repo
-  // names plus a scan of the worktree root. `timber list` is avoided on
-  // purpose — its styled two-per-row table still emits ANSI under
-  // NO_COLOR and it enriches every row with git status, so one missing
-  // worktree directory fails the whole listing.
+  // The filesystem scan owns membership. Optional JSON enrichment supplies
+  // Status/Todo badges without hiding rows if timber list fails.
   readonly property string listScript: [
     'data_home=${XDG_DATA_HOME:-$HOME/.local/share};',
     'root=${TIMBER_WORKTREE_ROOT:-$HOME/worktrees};',
@@ -64,9 +80,12 @@ Panel {
     'printf "%s\\n" "$repos" | while IFS= read -r repo; do [ -n "$repo" ] || continue;',
     '  for d in "$root/$repo"/**/"$repo"; do [ -e "$d/.git" ] || continue;',
     '    parent=${d%/*}; name=${parent#"$root/$repo"/}; [ -n "$name" ] || continue;',
-    '    printf "W\\t%s@%s\\t%s\\n" "$name" "$repo" "$d";',
+    '    stamp=$(git -C "$d" log -1 --format=%ct 2>/dev/null) || stamp=$(stat -c %Y -- "$d" 2>/dev/null);',
+    '    printf "W\\t%s@%s\\t%s\\t%s\\n" "$name" "$repo" "$d" "$stamp";',
     '  done;',
-    'done'
+    'done;',
+    'details=$(timber list --json 2>/dev/null) && printf "D\\t%s\\n" "$details";',
+    'exit 0'
   ].join("\n")
 
   function refresh() {
@@ -74,14 +93,33 @@ Panel {
     root.armedRemoveValue = ""
     root.filterText = ""
     root.selectedIndex = 0
+    root.selectedID = ""
     root.cursorActive = false
     root.syncFilterField()
+    root.refreshInBackground()
+  }
+
+  function refreshInBackground() {
+    if (listProc.running) {
+      root.refreshQueued = true
+      return
+    }
     listProc.running = true
+  }
+
+  function presentFromCache() {
+    root.filterText = ""
+    root.selectedIndex = 0
+    root.selectedID = ""
+    root.cursorActive = false
+    root.rebuildDisplay()
+    root.syncFilterField()
   }
 
   function setFilter(nextFilter) {
     root.filterText = nextFilter
     root.selectedIndex = 0
+    root.selectedID = ""
     root.cursorActive = true
     root.rebuildDisplay()
     root.syncFilterField()
@@ -117,44 +155,22 @@ Panel {
   }
 
   function applyListOutput(text) {
-    var repos = []
-    var worktrees = []
-    var lines = String(text || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i]
-      if (!line) continue
-      var parts = line.split("\t")
-      if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
-      else if (parts[0] === "W" && parts[1] && parts[2]) {
-        var split = TimberModel.splitValue(parts[1])
-        if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2] })
-      }
-    }
-    root.repos = repos
-    root.worktrees = worktrees
+    var listing = TimberModel.parseListing(text)
+    root.repos = listing.repos
+    root.worktrees = listing.worktrees
     root.rebuildDisplay()
   }
 
   function rebuildDisplay() {
     // Any list change (filter edit, fresh listing) disarms delete.
     root.armedRemoveValue = ""
-    var items = TimberModel.itemsForTerm(root.repos, root.worktrees, root.filterText)
+    var items = TimberModel.itemsForTerm(root.repos, root.worktrees, root.filterText, root.sortMode)
     displayModel.clear()
     for (var i = 0; i < items.length; i++) {
-      var path = ""
-      if (items[i].kind === "open") {
-        for (var j = 0; j < root.worktrees.length; j++) {
-          if (root.worktrees[j].name === items[i].name && root.worktrees[j].repo === items[i].repo) {
-            path = root.worktrees[j].path
-            break
-          }
-        }
-      }
-      displayModel.append({ kind: items[i].kind, name: items[i].name, repo: items[i].repo, value: items[i].value, path: path })
+      displayModel.append(items[i])
     }
-    if (displayModel.count === 0) root.selectedIndex = 0
-    else if (root.selectedIndex >= displayModel.count) root.selectedIndex = displayModel.count - 1
-    else if (root.selectedIndex < 0) root.selectedIndex = 0
+    root.selectedIndex = TimberModel.selectedItemIndex(items, root.selectedID)
+    root.selectedID = items.length ? TimberModel.itemID(items[root.selectedIndex]) : ""
     Qt.callLater(function() {
       if (displayModel.count > 0) resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
     })
@@ -267,13 +283,39 @@ Panel {
 
   onOpenedChanged: if (opened) {
     root.closeRepoForm()
-    root.refresh()
+    root.presentFromCache()
+    root.refreshInBackground()
     Qt.callLater(function() { filterField.forceActiveFocus() })
   }
 
   // Moving selection to another row disarms a pending delete, so an
   // armed (red) icon can never trail behind navigation.
-  onSelectedIndexChanged: root.armedRemoveValue = ""
+  onSelectedIndexChanged: {
+    root.armedRemoveValue = ""
+    if (selectedIndex >= 0 && selectedIndex < displayModel.count)
+      root.selectedID = TimberModel.itemID(displayModel.get(selectedIndex))
+  }
+
+  Component.onCompleted: root.refreshInBackground()
+
+  Timer {
+    interval: 60000
+    running: true
+    repeat: true
+    onTriggered: if (!root.opened) root.refreshInBackground()
+  }
+
+  FontMetrics {
+    id: rowFontMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.title
+  }
+
+  FontMetrics {
+    id: badgeFontMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.body
+  }
 
   ListModel { id: displayModel }
 
@@ -376,12 +418,17 @@ Panel {
     id: listProc
     command: ["bash", "-lc", root.listScript]
     stdout: StdioCollector {
+      id: listStdout
       waitForEnd: true
-      onStreamFinished: root.applyListOutput(text)
     }
     onExited: function(code) {
-      if (code !== 0 && displayModel.count === 0)
-        root.notifyFailure("worktree list", "timber repo list exited " + code)
+      root.listing = false
+      if (code === 0) root.applyListOutput(listStdout.text)
+      else root.notifyFailure("worktree list", "filesystem scan exited " + code)
+      if (root.refreshQueued) {
+        root.refreshQueued = false
+        Qt.callLater(root.refreshInBackground)
+      }
     }
   }
 
@@ -405,7 +452,7 @@ Panel {
     // The quickfilter owns typing, so it takes focus on open (with a
     // visible text cursor) instead of the bare key catcher.
     focusTarget: filterField
-    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentWidth: panel.fittedContentWidth(root.popupWidth)
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
 
     // Raw key handling instead of PanelKeyCatcher: the quickfilter is a
@@ -553,6 +600,23 @@ Panel {
           }
         }
 
+        ButtonGroup {
+          anchors.horizontalCenter: parent.horizontalCenter
+          options: [
+            { value: "recency", label: "Recency" },
+            { value: "repo", label: "Repo" },
+            { value: "worktree", label: "Worktree" }
+          ]
+          value: root.sortMode
+          focusable: false
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          onChanged: function(value) {
+            root.sortMode = value
+            root.rebuildDisplay()
+          }
+        }
+
         // Form fronting `timber repo add <url-or-path> [--name] [--alias]`.
         // Enter in any field submits; Tab walks the fields and buttons via
         // the normal focus chain (the key handler above stands aside while
@@ -626,6 +690,13 @@ Panel {
           spacing: Style.space(4)
           boundsBehavior: Flickable.StopAtBounds
 
+          HoverHandler {
+            onHoveredChanged: if (!hovered) {
+              root.cursorActive = false
+              root.armedRemoveValue = ""
+            }
+          }
+
           // Plain item instead of CursorSurface: selection is a slim
           // accent marker at the leading edge, not a full-row box.
           delegate: Item {
@@ -634,6 +705,8 @@ Panel {
             required property string kind
             required property string value
             required property string path
+            required property string statusText
+            required property string todoText
 
             readonly property bool selected: root.cursorActive && index === root.selectedIndex
 
@@ -656,14 +729,49 @@ Panel {
               textFormat: Text.PlainText
               anchors.fill: parent
               anchors.leftMargin: Style.space(12)
-              anchors.rightMargin: actionsRow.implicitWidth + Style.space(20)
+              anchors.rightMargin: badgesRow.implicitWidth + actionsRow.implicitWidth + Style.space(28)
               verticalAlignment: Text.AlignVCenter
               text: (row.kind === "create" ? "+ " : "") + row.value
               color: root.foreground
               opacity: row.kind === "create" && !row.selected ? 0.72 : 1.0
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
-              elide: Text.ElideRight
+              elide: Text.ElideMiddle
+            }
+
+            Row {
+              id: badgesRow
+              anchors.right: actionsRow.left
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
+
+              Text {
+                textFormat: Text.PlainText
+                text: row.statusText
+                visible: text !== ""
+                color: root.foreground
+                opacity: 0.7
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                text: row.todoText
+                visible: text !== ""
+                color: root.foreground
+                opacity: 0.7
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+            }
+
+            HoverHandler {
+              onHoveredChanged: if (hovered) {
+                root.cursorActive = true
+                root.selectedIndex = row.index
+              }
             }
 
             MouseArea {
@@ -688,32 +796,36 @@ Panel {
             // than opening Zed.
             Row {
               id: actionsRow
-              visible: row.selected
+              width: root.actionsWidth
+              opacity: row.selected ? 1 : 0.15
               anchors.right: parent.right
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(4)
 
               SvgActionButton {
+                size: root.actionSize
                 iconSource: "zed.svg"
                 tooltipText: row.kind === "open" ? "Open in Zed" : "Create and open in Zed"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 enabled: !createProc.running && !herdrProc.running
-                onClicked: root.openInZed(row.index)
+                onClicked: if (row.selected) root.openInZed(row.index)
               }
 
               SvgActionButton {
+                size: root.actionSize
                 iconSource: "herdr.svg"
                 tooltipText: row.kind === "open" ? "Open in Herdr" : "Create in Herdr"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 enabled: !createProc.running && !herdrProc.running
-                onClicked: root.openInHerdr(row.index)
+                onClicked: if (row.selected) root.openInHerdr(row.index)
               }
 
               PanelActionButton {
-                visible: row.kind === "open"
+                size: root.actionSize
+                opacity: row.kind === "open" ? 1 : 0
                 // nf-md-delete (U+F0159): the destructive-row glyph the
                 // first-party bluetooth panel uses for Forget.
                 // Monochrome until the first click arms it; red while
@@ -722,8 +834,8 @@ Panel {
                 tooltipText: (row.value === root.armedRemoveValue ? "Click again to remove " : "Remove ") + row.value
                 foreground: row.value === root.armedRemoveValue ? Color.urgent : root.foreground
                 fontFamily: root.fontFamily
-                enabled: !removeProc.running
-                onClicked: root.armOrRemoveIndex(row.index)
+                enabled: row.kind === "open" && !removeProc.running
+                onClicked: if (row.selected) root.armOrRemoveIndex(row.index)
               }
             }
           }
@@ -733,7 +845,7 @@ Panel {
           textFormat: Text.PlainText
           visible: displayModel.count === 0
           width: parent.width
-          text: root.worktrees.length === 0 ? "No worktrees yet — type name@repo to create one" : "No matches"
+          text: root.listing ? "Loading worktrees…" : (root.worktrees.length === 0 ? "No worktrees yet — type name@repo to create one" : "No matches")
           color: root.foreground
           opacity: 0.7
           font.family: root.fontFamily

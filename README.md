@@ -1,9 +1,8 @@
 # omarchy-timber
 
 Omarchy overlay plugin that fronts [`timber`](https://github.com/nnutter/timber)
-managed Git worktrees, mirroring `timber tui`: fuzzy-filter the existing
-worktrees, type `name@repo` to create, `enter` to open in Zed, or use
-the trailing Zed/Herdr logo icons to open in Zed or a Herdr space.
+managed Git worktrees, with the shared features of [macos-timber](https://github.com/nnutter/macos-timber).
+Fuzzy-filter the existing worktrees, type `name@repo` to create, press `enter` to open in Zed, or use the trailing Zed/Herdr icons to open in Zed or a Herdr space.
 
 ## Requirements
 
@@ -28,11 +27,30 @@ overlay revision, disable and re-enable once so the entry moves from
 
 ## Use
 
+The plugin loads worktrees at startup and refreshes once a minute while the panel is closed.
+Opening shows the cached rows immediately, then refreshes without clearing the filter or changing the selected worktree.
+
 Click the bar icon or run:
 
 ```bash
 omarchy-shell io.github.nnutter.omarchy-timber toggle
 ```
+
+The centered sort picker offers **Recency** (default), **Repo**, and **Worktree**.
+Recency uses the newest commit timestamp, with directory modification time as a fallback.
+Changing the sort preserves the selected row.
+
+Existing rows show the `timber ls` Status and Todo badges:
+
+- Status shows `merged`, `↑N`, `↓N`, or `error`, without the upstream suffix.
+- Todo shows `done/total` only when checklist items exist.
+- Missing or unreadable JSON details hide badges without hiding the worktree.
+
+The popup grows to fit names and badges within width and screen bounds.
+Long names truncate in the middle so the repository remains visible.
+Row actions remain dimmed when unselected.
+Leaving the list disarms deletion and dims every row.
+Arrow keys restore active selection.
 
 Keys: the header is a quickfilter field — type to filter
 (`@` narrows to repos) with native cursor editing (`←` / `→`,
@@ -74,13 +92,18 @@ mise run test     # TimberModel unit tests (runs check first)
 mise run install  # test, then copy into ~/.config/omarchy/plugins and rescan
 ```
 
-`qmllint` cannot come from mise (Qt is not in the registry) and
-quickshell ships as a system package, so validate `Timber.qml` by
-summoning the installed plugin on a live Omarchy machine.
+`qmllint` cannot come from mise because Qt is not in the registry.
+The check task uses the system `qmllint` when available.
+Quickshell also ships as a system package.
+Validate `Panel.qml` on a live Omarchy machine to check rendering, keyboard navigation, mouse-leave behavior, scrolling, and screen bounds.
 
 ## Notes
 
-Worktrees are enumerated the way timber's own zsh completion does
-(`timber repo list -q` plus a scan of `$TIMBER_WORKTREE_ROOT`) rather
-than parsing `timber list`, whose styled table still emits ANSI under
-`NO_COLOR` and fails as a whole when one worktree directory is missing.
+Worktrees are enumerated the way timber's own zsh completion does: `timber repo list -q` plus a scan of `$TIMBER_WORKTREE_ROOT`.
+The filesystem scan owns membership.
+`timber list --json` only enriches scanned rows with Status/Todo details.
+Its failure does not invalidate the scan.
+
+Omarchy owns the bar, plugin enablement, and shell startup.
+The macOS Quit menu, Open at Login toggle, app icon, and packaging have no plugin equivalent.
+The Omarchy repository form retains its optional alias field.

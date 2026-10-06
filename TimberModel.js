@@ -6,6 +6,41 @@
 // worktrees:[{ name: "feature/login", repo: "timber" }]
 // items:    [{ kind: "open"|"create", name, repo, value: "name@repo" }]
 
+// Parse the repository/worktree records produced by the filesystem scan.
+function parseListing(text) {
+  var repos = []
+  var worktrees = []
+  var details = {}
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var parts = lines[i].split("\t")
+    if (parts[0] === "D") {
+      try {
+        var rows = JSON.parse(lines[i].slice(2))
+        if (Array.isArray(rows)) {
+          for (var j = 0; j < rows.length; j++) {
+            var row = rows[j]
+            if (row && typeof row.name === "string" && typeof row.repo === "string")
+              details["worktree:" + worktreeValue(row)] = row
+          }
+        }
+      } catch (error) {
+        // Optional enrichment must never invalidate the filesystem listing.
+      }
+    } else if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
+    else if (parts[0] === "W" && parts[1] && parts[2]) {
+      var split = splitValue(parts[1])
+      if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2], lastCommitAt: Number(parts[3]) || 0 })
+    }
+  }
+  for (var k = 0; k < worktrees.length; k++) {
+    var detail = details["worktree:" + worktreeValue(worktrees[k])] || {}
+    worktrees[k].statusText = listStatusText(detail)
+    worktrees[k].todoText = todoText(detail)
+  }
+  return { repos: repos, worktrees: worktrees }
+}
+
 // Case-insensitive fuzzy match: every char of term appears in order.
 function fuzzyMatch(term, target) {
   var t = String(term || "").toLowerCase()
@@ -95,15 +130,46 @@ function filterWorktrees(term, worktrees) {
   return out
 }
 
+// Mirror timber ls Status without its upstream suffix.
+function listStatusText(detail) {
+  if (detail.statusError === true) return "error"
+  if (detail.merged === true) return "merged"
+  var parts = []
+  if (typeof detail.ahead === "number" && detail.ahead > 0) parts.push("↑" + detail.ahead)
+  if (typeof detail.behind === "number" && detail.behind > 0) parts.push("↓" + detail.behind)
+  return parts.join(" ")
+}
+
+function todoText(detail) {
+  if (typeof detail.todoTotal !== "number" || detail.todoTotal <= 0) return ""
+  var done = typeof detail.todoDone === "number" ? detail.todoDone : 0
+  return done + "/" + detail.todoTotal
+}
+
+function compareText(a, b) {
+  return a < b ? -1 : (a > b ? 1 : 0)
+}
+
+// Sort a copy. Missing or tied commit dates fall back to name@repo.
+function sortWorktrees(worktrees, mode) {
+  return worktrees.slice().sort(function(a, b) {
+    if (mode === "repo") return compareText(a.repo, b.repo) || compareText(a.name, b.name)
+    if (mode === "worktree") return compareText(a.name, b.name) || compareText(a.repo, b.repo)
+    var dateOrder = (b.lastCommitAt || 0) - (a.lastCommitAt || 0)
+    return dateOrder || compareText(worktreeValue(a), worktreeValue(b))
+  })
+}
+
 // Mirror wizardItemsForTerm: existing worktrees first, then one `create`
 // row per matching repo when the term is a qualified `name@repo`.
-function itemsForTerm(repos, worktrees, term) {
+function itemsForTerm(repos, worktrees, term, sort) {
+  worktrees = sortWorktrees(worktrees || [], sort || "recency")
   var t = String(term || "")
   var items = []
   var ranks = filterWorktrees(t, worktrees || [])
   for (var i = 0; i < ranks.length; i++) {
     var w = (worktrees || [])[ranks[i].index]
-    items.push({ kind: "open", name: w.name, repo: w.repo, value: worktreeValue(w) })
+    items.push({ kind: "open", name: w.name, repo: w.repo, value: worktreeValue(w), path: w.path || "", statusText: w.statusText || "", todoText: w.todoText || "" })
   }
 
   var termParts = cutLast(t, "@")
@@ -115,9 +181,22 @@ function itemsForTerm(repos, worktrees, term) {
   for (var k = 0; k < repoRanks.length; k++) {
     var repo = (repos || [])[repoRanks[k].index]
     if (hasWorktree(worktrees || [], termParts.before, repo.name)) continue
-    items.push({ kind: "create", name: termParts.before, repo: repo.name, value: termParts.before + "@" + repo.name })
+    items.push({ kind: "create", name: termParts.before, repo: repo.name, value: termParts.before + "@" + repo.name, path: "", statusText: "", todoText: "" })
   }
   return items
+}
+
+// Kind distinguishes a create row from an existing worktree of the same name.
+function itemID(item) {
+  return item.kind + ":" + item.value
+}
+
+// Keep selection on the same row when a refresh changes its position.
+function selectedItemIndex(items, selectedID) {
+  for (var i = 0; i < items.length; i++) {
+    if (itemID(items[i]) === selectedID) return i
+  }
+  return 0
 }
 
 function splitValue(value) {
