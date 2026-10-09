@@ -25,9 +25,9 @@ const {
 
 const repos = [{ name: "timber" }, { name: "persona" }];
 const worktrees = [
+  { name: "alpha", repo: "persona" },
   { name: "alpha", repo: "timber" },
   { name: "beta", repo: "persona" },
-  { name: "alpha", repo: "persona" },
 ];
 
 // Array.from re-roots the results in this realm: itemsForTerm returns
@@ -83,10 +83,9 @@ describe("itemsForTerm", () => {
   });
 });
 
-describe("Status and Todo enrichment", () => {
-  const scan = "R\ttimber\nW\talpha@timber\t/tmp/alpha\t100\n";
+describe("JSON worktree listing", () => {
   const display = (json) => {
-    const listing = parseListing(scan + "D\t" + json + "\n");
+    const listing = parseListing("R\ttimber\nD\t" + json + "\n");
     return itemsForTerm(listing.repos, listing.worktrees, "");
   };
   for (const [detail, status, todo] of [
@@ -98,38 +97,50 @@ describe("Status and Todo enrichment", () => {
     [{ ahead: "2", merged: "false", todoTotal: "4" }, "", ""],
   ]) {
     it(`renders ${JSON.stringify(detail)} as quiet or explicit badges`, () => {
-      const items = display(JSON.stringify([{ name: "alpha", repo: "timber", upstream: "origin/main", ...detail }]));
+      const items = display(JSON.stringify([{ name: "alpha", repo: "timber", path: "/tmp/alpha", upstream: "origin/main", ...detail }]));
       assert.equal(items[0].statusText, status);
       assert.equal(items[0].todoText, todo);
       assert.equal(items[0].path, "/tmp/alpha");
     });
   }
-  it("keeps scanned rows when enrichment is absent, malformed, or unrelated", () => {
-    for (const json of ["", "not JSON", "{}", "null", '[null, {"name":"ghost","repo":"timber","ahead":5}]']) {
-      const items = display(json);
-      assert.deepEqual(values(items), ["alpha@timber"]);
-      assert.equal(items[0].statusText, "");
-      assert.equal(items[0].todoText, "");
-    }
+  it("opens arbitrary paths from JSON and offers creation in empty repositories", () => {
+    const listing = parseListing("R\torg/repo\nR\tempty\nD\t" + JSON.stringify([
+      { name: "feature/login", repo: "org/repo", path: "/srv/my projects/login", ahead: 2 },
+      { name: "main", repo: "org/repo", path: "/opt/checkout" },
+    ], null, 2));
+    const items = itemsForTerm(listing.repos, listing.worktrees, "feature/login@org/repo");
+    assert.deepEqual(kinds(items), ["open"]);
+    assert.equal(items[0].path, "/srv/my projects/login");
+    assert.equal(items[0].statusText, "↑2");
+    const created = itemsForTerm(listing.repos, listing.worktrees, "new@empty");
+    assert.deepEqual(kinds(created), ["create"]);
+    assert.equal(created[0].statusText, "");
+    assert.equal(created[0].todoText, "");
   });
-  it("never transfers badges to a create suggestion", () => {
-    const listing = parseListing(scan + 'D\t[{"name":"ghost","repo":"timber","ahead":5}]\n');
-    const items = itemsForTerm(listing.repos, listing.worktrees, "ghost@timber");
-    assert.deepEqual(kinds(items), ["create"]);
-    assert.equal(items[0].statusText, "");
-    assert.equal(items[0].todoText, "");
+  it("rejects malformed or incomplete JSON listings", () => {
+    for (const json of ["", "not JSON", "{}", "null", "[null]",
+      '[{"name":"alpha","repo":"timber"}]',
+      '[{"name":"alpha","repo":"timber","path":"/tmp/alpha"},{"name":"bad","path":"/tmp/bad"}]']) {
+      assert.throws(() => display(json));
+    }
+    assert.throws(() => parseListing("R\ttimber\n"));
+  });
+  it("accepts an empty worktree list without losing create suggestions", () => {
+    const listing = parseListing("R\ttimber\nD\t[]\n");
+    assert.deepEqual(values(itemsForTerm(listing.repos, listing.worktrees, "")), []);
+    assert.deepEqual(kinds(itemsForTerm(listing.repos, listing.worktrees, "new@timber")), ["create"]);
   });
 });
 
 describe("display sorting", () => {
   const rows = [
-    { name: "z", repo: "a", lastCommitAt: 200 },
-    { name: "a", repo: "z", lastCommitAt: 100 },
-    { name: "a", repo: "a", lastCommitAt: 200 },
+    { name: "z", repo: "a" },
+    { name: "a", repo: "z" },
+    { name: "a", repo: "a" },
     { name: "b", repo: "a" },
   ];
   for (const [mode, expected] of [
-    [undefined, ["a@a", "z@a", "a@z", "b@a"]],
+    [undefined, ["z@a", "a@z", "a@a", "b@a"]],
     ["repo", ["a@a", "b@a", "z@a", "a@z"]],
     ["worktree", ["a@a", "a@z", "b@a", "z@a"]],
   ]) {
@@ -139,10 +150,14 @@ describe("display sorting", () => {
       assert.equal(rows[0].name, "z", "sorting does not reorder the cache");
     });
   }
-  it("uses scan timestamps and tolerates old records without a date", () => {
-    const listing = parseListing("R\ttimber\nW\told@timber\t/tmp/old\nW\tnew@timber\t/tmp/new\t300\n");
-    const items = itemsForTerm(listing.repos, listing.worktrees, "");
-    assert.deepEqual(values(items), ["new@timber", "old@timber"]);
+  it("restores Timber's recency order after another sort mode", () => {
+    const listing = parseListing("R\ttimber\nD\t" + JSON.stringify([
+      { name: "z-new", repo: "timber", path: "/tmp/new" },
+      { name: "a-old", repo: "timber", path: "/tmp/old" },
+    ]));
+    assert.deepEqual(values(itemsForTerm(listing.repos, listing.worktrees, "", "worktree")), ["a-old@timber", "z-new@timber"]);
+    const items = itemsForTerm(listing.repos, listing.worktrees, "", "recency");
+    assert.deepEqual(values(items), ["z-new@timber", "a-old@timber"]);
     assert.equal(items[0].path, "/tmp/new");
   });
 });

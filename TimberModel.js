@@ -6,37 +6,32 @@
 // worktrees:[{ name: "feature/login", repo: "timber" }]
 // items:    [{ kind: "open"|"create", name, repo, value: "name@repo" }]
 
-// Parse the repository/worktree records produced by the filesystem scan.
+// R-prefixed repository names, then D-prefixed timber list --json output.
+// JSON owns membership and paths. Reject invalid data before replacing cache.
 function parseListing(text) {
   var repos = []
   var worktrees = []
-  var details = {}
   var lines = String(text || "").split("\n")
+  var dataIndex = -1
   for (var i = 0; i < lines.length; i++) {
-    var parts = lines[i].split("\t")
-    if (parts[0] === "D") {
-      try {
-        var rows = JSON.parse(lines[i].slice(2))
-        if (Array.isArray(rows)) {
-          for (var j = 0; j < rows.length; j++) {
-            var row = rows[j]
-            if (row && typeof row.name === "string" && typeof row.repo === "string")
-              details["worktree:" + worktreeValue(row)] = row
-          }
-        }
-      } catch (error) {
-        // Optional enrichment must never invalidate the filesystem listing.
-      }
-    } else if (parts[0] === "R" && parts[1]) repos.push({ name: parts[1] })
-    else if (parts[0] === "W" && parts[1] && parts[2]) {
-      var split = splitValue(parts[1])
-      if (split) worktrees.push({ name: split.name, repo: split.repo, path: parts[2], lastCommitAt: Number(parts[3]) || 0 })
+    if (lines[i].slice(0, 2) === "D\t") {
+      dataIndex = i
+      break
     }
+    if (lines[i].slice(0, 2) === "R\t" && lines[i].length > 2)
+      repos.push({ name: lines[i].slice(2) })
   }
-  for (var k = 0; k < worktrees.length; k++) {
-    var detail = details["worktree:" + worktreeValue(worktrees[k])] || {}
-    worktrees[k].statusText = listStatusText(detail)
-    worktrees[k].todoText = todoText(detail)
+  if (dataIndex === -1) throw new Error("Missing worktree JSON")
+  var rows = JSON.parse(lines.slice(dataIndex).join("\n").slice(2))
+  if (!Array.isArray(rows)) throw new Error("Expected a worktree JSON array")
+  for (var j = 0; j < rows.length; j++) {
+    var row = rows[j]
+    if (!row || typeof row.name !== "string" || !row.name ||
+        typeof row.repo !== "string" || !row.repo ||
+        typeof row.path !== "string" || !row.path)
+      throw new Error("Invalid worktree JSON record")
+    worktrees.push({ name: row.name, repo: row.repo, path: row.path,
+      statusText: listStatusText(row), todoText: todoText(row) })
   }
   return { repos: repos, worktrees: worktrees }
 }
@@ -150,13 +145,13 @@ function compareText(a, b) {
   return a < b ? -1 : (a > b ? 1 : 0)
 }
 
-// Sort a copy. Missing or tied commit dates fall back to name@repo.
+// Sort a copy, preserving timber list --sort recency order by default.
 function sortWorktrees(worktrees, mode) {
-  return worktrees.slice().sort(function(a, b) {
+  var rows = worktrees.slice()
+  if (mode !== "repo" && mode !== "worktree") return rows
+  return rows.sort(function(a, b) {
     if (mode === "repo") return compareText(a.repo, b.repo) || compareText(a.name, b.name)
-    if (mode === "worktree") return compareText(a.name, b.name) || compareText(a.repo, b.repo)
-    var dateOrder = (b.lastCommitAt || 0) - (a.lastCommitAt || 0)
-    return dateOrder || compareText(worktreeValue(a), worktreeValue(b))
+    return compareText(a.name, b.name) || compareText(a.repo, b.repo)
   })
 }
 

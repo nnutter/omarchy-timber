@@ -1,7 +1,7 @@
 # omarchy-timber
 
-Omarchy overlay plugin that fronts [`timber`](https://github.com/nnutter/timber)
-managed Git worktrees, with the shared features of [macos-timber](https://github.com/nnutter/macos-timber).
+Omarchy overlay plugin that fronts [`timber`](https://github.com/nnutter/timber) Git worktrees, with the shared features of [macos-timber](https://github.com/nnutter/macos-timber).
+It lists both Timber-managed worktrees and arbitrary Git worktrees that Timber discovers for registered repositories.
 Fuzzy-filter the existing worktrees, type `name@repo` to create, press `enter` to open in Zed, or use the trailing Zed/Herdr icons to open in Zed or a Herdr space.
 
 ## Requirements
@@ -37,14 +37,14 @@ omarchy-shell io.github.nnutter.omarchy-timber toggle
 ```
 
 The centered sort picker offers **Recency** (default), **Repo**, and **Worktree**.
-Recency uses the newest commit timestamp, with directory modification time as a fallback.
+Recency follows the order from `timber list --json --sort recency`.
 Changing the sort preserves the selected row.
 
 Existing rows show the `timber ls` Status and Todo badges:
 
 - Status shows `merged`, `↑N`, `↓N`, or `error`, without the upstream suffix.
 - Todo shows `done/total` only when checklist items exist.
-- Missing or unreadable JSON details hide badges without hiding the worktree.
+- Listing failures or invalid JSON retain the cached rows and produce a critical desktop notification.
 
 The popup grows to fit names and badges within width and screen bounds.
 Long names truncate in the middle so the repository remains visible.
@@ -99,10 +99,10 @@ Validate `Panel.qml` on a live Omarchy machine to check rendering, keyboard navi
 
 ## Notes
 
-Worktrees are enumerated the way timber's own zsh completion does: `timber repo list -q` plus a scan of `$TIMBER_WORKTREE_ROOT`.
-The filesystem scan owns membership.
-`timber list --json` only enriches scanned rows with Status/Todo details.
-Its failure does not invalidate the scan.
+`timber list --json --sort recency` supplies worktree membership, paths, badges, and recency order.
+The plugin does not assume a directory layout or scan `$TIMBER_WORKTREE_ROOT`.
+`timber repo list -q` supplies create suggestions, including repositories with no worktrees.
+If either command fails, the plugin retains its cached listing.
 
 Omarchy owns the bar, plugin enablement, and shell startup.
 The macOS Quit menu, Open at Login toggle, app icon, and packaging have no plugin equivalent.

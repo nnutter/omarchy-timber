@@ -5,7 +5,7 @@ import qs.Commons
 import qs.Ui
 import "TimberModel.js" as TimberModel
 
-// Bar-widget frontend to `timber` (managed Git worktrees), following the
+// Bar-widget frontend to `timber` (registered Git worktrees), following the
 // agents panel: a bar icon plus an anchored popup. Toggle with the icon
 // or `omarchy-shell io.github.nnutter.omarchy-timber toggle`.
 Panel {
@@ -66,26 +66,13 @@ Panel {
   readonly property int visibleRows: Math.max(1, Math.min(displayModel.count, root.maxVisibleRows))
   readonly property int listHeight: root.visibleRows * root.rowHeight + (root.visibleRows - 1) * Style.space(4)
 
-  // The filesystem scan owns membership. Optional JSON enrichment supplies
-  // Status/Todo badges without hiding rows if timber list fails.
+  // Timber owns worktree discovery, paths, badges, and recency ordering.
+  // Keep the repository list separate so empty repos offer create rows.
   readonly property string listScript: [
-    'data_home=${XDG_DATA_HOME:-$HOME/.local/share};',
-    'root=${TIMBER_WORKTREE_ROOT:-$HOME/worktrees};',
-    'repos=$(timber repo list -q 2>/dev/null);',
-    'if [ -z "$repos" ]; then',
-    '  repos=$(for d in "$data_home"/timber/repos/*.git; do [ -d "$d" ] || continue; b=${d##*/}; echo "${b%.git}"; done);',
-    'fi;',
+    'repos=$(timber repo list -q) || exit $?;',
     'printf "%s\\n" "$repos" | while IFS= read -r repo; do [ -n "$repo" ] || continue; printf "R\\t%s\\n" "$repo"; done;',
-    'shopt -s globstar nullglob;',
-    'printf "%s\\n" "$repos" | while IFS= read -r repo; do [ -n "$repo" ] || continue;',
-    '  for d in "$root/$repo"/**/"$repo"; do [ -e "$d/.git" ] || continue;',
-    '    parent=${d%/*}; name=${parent#"$root/$repo"/}; [ -n "$name" ] || continue;',
-    '    stamp=$(git -C "$d" log -1 --format=%ct 2>/dev/null) || stamp=$(stat -c %Y -- "$d" 2>/dev/null);',
-    '    printf "W\\t%s@%s\\t%s\\t%s\\n" "$name" "$repo" "$d" "$stamp";',
-    '  done;',
-    'done;',
-    'details=$(timber list --json 2>/dev/null) && printf "D\\t%s\\n" "$details";',
-    'exit 0'
+    'printf "D\\t";',
+    'exec timber list --json --sort recency'
   ].join("\n")
 
   function refresh() {
@@ -421,10 +408,22 @@ Panel {
       id: listStdout
       waitForEnd: true
     }
+    stderr: StdioCollector {
+      id: listStderr
+      waitForEnd: true
+    }
     onExited: function(code) {
       root.listing = false
-      if (code === 0) root.applyListOutput(listStdout.text)
-      else root.notifyFailure("worktree list", "filesystem scan exited " + code)
+      if (code === 0) {
+        try {
+          root.applyListOutput(listStdout.text)
+        } catch (error) {
+          root.notifyFailure("worktree list", String(error))
+        }
+      } else {
+        var detail = String(listStderr.text || "").trim().split("\n").pop() || ("exit " + code)
+        root.notifyFailure("worktree list", detail)
+      }
       if (root.refreshQueued) {
         root.refreshQueued = false
         Qt.callLater(root.refreshInBackground)
