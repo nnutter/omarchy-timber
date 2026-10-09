@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -37,6 +38,9 @@ Panel {
   // armed (red) and awaiting a second click; blank when nothing is
   // armed. Monochrome icons are unarmed and only arm on click.
   property string armedRemoveValue: ""
+  // Keep the in-flight row separate from the armed row so navigation
+  // and list refreshes cannot clear its progress indicator.
+  property string removingValue: ""
 
   // True while one of the `timber repo add` form fields owns keyboard
   // focus. The raw key handler below must let those keys through to the
@@ -211,6 +215,7 @@ Panel {
     if (row.kind !== "open") return
     if (removeProc.running) return
     root.armedRemoveValue = ""
+    root.removingValue = row.value
     removeProc.command = ["timber", "remove", row.value]
     removeProc.running = true
   }
@@ -349,6 +354,7 @@ Panel {
       waitForEnd: true
     }
     onExited: function(code) {
+      root.removingValue = ""
       if (code === 0) {
         root.refresh()
       } else {
@@ -708,6 +714,7 @@ Panel {
             required property string todoText
 
             readonly property bool selected: root.cursorActive && index === root.selectedIndex
+            readonly property bool removing: row.kind === "open" && row.value === root.removingValue
 
             width: ListView.view.width
             implicitHeight: root.rowHeight
@@ -796,7 +803,7 @@ Panel {
             Row {
               id: actionsRow
               width: root.actionsWidth
-              opacity: row.selected ? 1 : 0.15
+              opacity: row.selected || row.removing ? 1 : 0.15
               anchors.right: parent.right
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
@@ -822,19 +829,32 @@ Panel {
                 onClicked: if (row.selected) root.openInHerdr(row.index)
               }
 
-              PanelActionButton {
-                size: root.actionSize
-                opacity: row.kind === "open" ? 1 : 0
-                // nf-md-delete (U+F0159): the destructive-row glyph the
-                // first-party bluetooth panel uses for Forget.
-                // Monochrome until the first click arms it; red while
-                // armed, when a second click runs `timber remove`.
-                iconText: "󰅙"
-                tooltipText: (row.value === root.armedRemoveValue ? "Click again to remove " : "Remove ") + row.value
-                foreground: row.value === root.armedRemoveValue ? Color.urgent : root.foreground
-                fontFamily: root.fontFamily
-                enabled: row.kind === "open" && !removeProc.running
-                onClicked: if (row.selected) root.armOrRemoveIndex(row.index)
+              Item {
+                width: root.actionSize
+                height: root.actionSize
+
+                PanelActionButton {
+                  size: root.actionSize
+                  visible: !row.removing
+                  opacity: row.kind === "open" ? 1 : 0
+                  // Monochrome until the first click arms it; red while
+                  // armed, when a second click runs `timber remove`.
+                  iconText: "󰅙"
+                  tooltipText: (row.value === root.armedRemoveValue ? "Click again to remove " : "Remove ") + row.value
+                  foreground: row.value === root.armedRemoveValue ? Color.urgent : root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: row.kind === "open" && !removeProc.running
+                  onClicked: if (row.selected) root.armOrRemoveIndex(row.index)
+                }
+
+                Controls.BusyIndicator {
+                  anchors.fill: parent
+                  visible: row.removing
+                  running: row.removing
+                  palette.dark: root.foreground
+                  palette.windowText: root.foreground
+                  palette.highlight: root.foreground
+                }
               }
             }
           }
