@@ -206,7 +206,7 @@ Panel {
   function openPath(path) {
     if (!path) return
     root.close()
-    Util.execArgv(["zed", "--new", path])
+    Util.execArgv(["zed", path])
   }
 
   function removeIndex(index) {

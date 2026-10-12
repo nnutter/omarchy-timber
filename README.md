@@ -7,7 +7,7 @@ Fuzzy-filter the existing worktrees, type `name@repo` to create, press `enter` t
 ## Requirements
 
 - `timber` on `PATH`
-- `zed` on `PATH` (opening runs `zed --new <worktree dir>`)
+- `zed` on `PATH` (opening runs `zed <worktree dir>`)
 
 ## Install
 
